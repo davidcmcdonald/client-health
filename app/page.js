@@ -40,15 +40,9 @@ function Logo({ slug, file }) {
    Header normalisation utils
 ---------------------------- */
 const norm = (s) =>
-  (s || "")
-    .toString()
-    .trim()
-    .toLowerCase()
-    .replace(/[_\-\/]+/g, " ")
-    .replace(/\s+/g, " ");
+  (s || "").toString().trim().toLowerCase().replace(/[_\-\/]+/g, " ").replace(/\s+/g, " ");
 
 const CLIENT_KEY_MAP = {
-  // canonical -> accepted variants
   "Client": ["client", "client name", "name"],
   "Slug": ["slug", "client code", "code", "short code"],
   "LogoFile": ["logofile", "logo file", "logo", "logo filename", "logo path"],
@@ -68,9 +62,8 @@ const EVENTS_KEY_MAP = {
 };
 
 function buildIndexMap(headers, keyMap) {
-  // headers: array of column labels from GViz
   const hNorm = headers.map((h) => norm(h));
-  const out = {}; // canonical -> index
+  const out = {};
   Object.entries(keyMap).forEach(([canonical, variants]) => {
     const firstIdx = hNorm.findIndex((h) => variants.includes(h));
     if (firstIdx !== -1) out[canonical] = firstIdx;
@@ -111,31 +104,20 @@ export default function Page() {
         const cData = await cRes.json();
         const eData = await eRes.json();
 
-        // Convert [[values]] into canonical objects, tolerate header variations
-        const cRowsRaw = cData.rows.map((r) => Object.fromEntries(r.map((v, i) => [cData.columns[i], v])));
-        const eRowsRaw = eData.rows.map((r) => Object.fromEntries(r.map((v, i) => [eData.columns[i], v])));
-
+        // Try mapping tolerant headers first
         const cRowsCanon = mapRowsToCanonical(cData.columns, cData.rows, CLIENT_KEY_MAP)
           .filter(hasAnyValue)
-          .map((row) => ({
-            // sensible fallbacks
-            ...row,
-            Slug: row["Slug"] || "", // if empty, UI will show ?? on the logo
-            LogoFile: row["LogoFile"] || "",
-          }));
+          .map((row) => ({ ...row, Slug: row["Slug"] || "", LogoFile: row["LogoFile"] || "" }));
 
         const eRowsCanon = mapRowsToCanonical(eData.columns, eData.rows, EVENTS_KEY_MAP)
           .filter(hasAnyValue)
-          .map((row) => ({
-            ...row,
-            // normalise date to YYYY-MM-DD if GViz formatted string exists in original raw row
-            Date: row.Date || null,
-          }));
+          .map((row) => ({ ...row, Date: row.Date || null }));
 
-        // If we failed to map (e.g., headers are already canonical), fall back to exact names
-        const fallbackIfEmpty = (arr, raw, expectedKeys) => {
+        // Fallback: exact keys if you already used canonical headers
+        const fallbackIfEmpty = (arr, rawCols, rawRows, expectedKeys) => {
           if (arr.length > 0) return arr;
-          const clean = raw.map((o) => {
+          const rows = rawRows.map((r) => Object.fromEntries(r.map((v, i) => [rawCols[i], v])));
+          const clean = rows.map((o) => {
             const out = {};
             expectedKeys.forEach((k) => (out[k] = o[k] ?? null));
             return out;
@@ -144,15 +126,21 @@ export default function Page() {
         };
 
         setClients(
-          fallbackIfEmpty(cRowsCanon, cRowsRaw, [
-            "Client", "Slug", "LogoFile", "Client Lead", "Client Assist", "Last Comms Date", "Last Comms Type", "Comms Notes",
-          ]).sort((a, b) => (a.Client || "").localeCompare(b.Client || ""))
+          fallbackIfEmpty(
+            cRowsCanon,
+            cData.columns,
+            cData.rows,
+            ["Client", "Slug", "LogoFile", "Client Lead", "Client Assist", "Last Comms Date", "Last Comms Type", "Comms Notes"]
+          ).sort((a, b) => (a.Client || "").localeCompare(b.Client || ""))
         );
 
         setEvents(
-          fallbackIfEmpty(eRowsCanon, eRowsRaw, [
-            "Date", "Client", "Title", "Notes", "Priority",
-          ]).sort((a, b) => {
+          fallbackIfEmpty(
+            eRowsCanon,
+            eData.columns,
+            eData.rows,
+            ["Date", "Client", "Title", "Notes", "Priority"]
+          ).sort((a, b) => {
             const da = a.Date ? new Date(a.Date) : null;
             const db = b.Date ? new Date(b.Date) : null;
             if (!da && !db) return 0;
