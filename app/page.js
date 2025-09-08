@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-// Emoji for comms channel — easy to swap for SVGs later
 const COMMS_ICON = { Email: "✉️", Text: "💬", Phone: "📞" };
 
 function classNames(...a) { return a.filter(Boolean).join(" "); }
@@ -23,7 +22,7 @@ function Logo({ slug, file }) {
     return (
       <img
         src={`/logos/${file}`}
-        alt={slug}
+        alt={slug || "logo"}
         className="h-14 w-14 rounded-xl object-contain bg-white"
       />
     );
@@ -34,56 +33,6 @@ function Logo({ slug, file }) {
       {initials}
     </div>
   );
-}
-
-/* ---------------------------
-   Header normalisation utils
----------------------------- */
-const norm = (s) =>
-  (s || "").toString().trim().toLowerCase().replace(/[_\-\/]+/g, " ").replace(/\s+/g, " ");
-
-const CLIENT_KEY_MAP = {
-  "Client": ["client", "client name", "name"],
-  "Slug": ["slug", "client code", "code", "short code"],
-  "LogoFile": ["logofile", "logo file", "logo", "logo filename", "logo path"],
-  "Client Lead": ["client lead", "lead", "client lead (primary)", "client lead (lead)"],
-  "Client Assist": ["client assist", "assist", "assistant", "secondary"],
-  "Last Comms Date": ["last comms date", "last comms", "last communication date", "last contact date"],
-  "Last Comms Type": ["last comms type", "last comms channel", "last communication type", "last contact type"],
-  "Comms Notes": ["comms notes", "notes", "last comms notes", "comments"],
-};
-
-const EVENTS_KEY_MAP = {
-  "Date": ["date", "event date"],
-  "Client": ["client", "client name"],
-  "Title": ["title", "event", "campaign"],
-  "Notes": ["notes", "detail", "description"],
-  "Priority": ["priority", "prio"],
-};
-
-function buildIndexMap(headers, keyMap) {
-  const hNorm = headers.map((h) => norm(h));
-  const out = {};
-  Object.entries(keyMap).forEach(([canonical, variants]) => {
-    const firstIdx = hNorm.findIndex((h) => variants.includes(h));
-    if (firstIdx !== -1) out[canonical] = firstIdx;
-  });
-  return out;
-}
-
-function mapRowsToCanonical(headers, rows, keyMap) {
-  const idxMap = buildIndexMap(headers, keyMap);
-  return rows.map((r) => {
-    const obj = {};
-    Object.entries(idxMap).forEach(([canonical, i]) => {
-      obj[canonical] = r[i] ?? null;
-    });
-    return obj;
-  });
-}
-
-function hasAnyValue(obj) {
-  return Object.values(obj).some((v) => v !== null && v !== "" && v !== undefined);
 }
 
 export default function Page() {
@@ -104,51 +53,26 @@ export default function Page() {
         const cData = await cRes.json();
         const eData = await eRes.json();
 
-        // Try mapping tolerant headers first
-        const cRowsCanon = mapRowsToCanonical(cData.columns, cData.rows, CLIENT_KEY_MAP)
-          .filter(hasAnyValue)
-          .map((row) => ({ ...row, Slug: row["Slug"] || "", LogoFile: row["LogoFile"] || "" }));
+        const mapRows = (cols, rows) =>
+          rows.map(r => Object.fromEntries(r.map((v, i) => [cols[i], v])));
 
-        const eRowsCanon = mapRowsToCanonical(eData.columns, eData.rows, EVENTS_KEY_MAP)
-          .filter(hasAnyValue)
-          .map((row) => ({ ...row, Date: row.Date || null }));
+        const clientsRows = mapRows(cData.columns, cData.rows)
+          .filter(o => Object.values(o).some(v => v != null && String(v).trim() !== ""))
+          .sort((a,b)=> (a["Client"] || "").localeCompare(b["Client"] || ""));
 
-        // Fallback: exact keys if you already used canonical headers
-        const fallbackIfEmpty = (arr, rawCols, rawRows, expectedKeys) => {
-          if (arr.length > 0) return arr;
-          const rows = rawRows.map((r) => Object.fromEntries(r.map((v, i) => [rawCols[i], v])));
-          const clean = rows.map((o) => {
-            const out = {};
-            expectedKeys.forEach((k) => (out[k] = o[k] ?? null));
-            return out;
-          }).filter(hasAnyValue);
-          return clean;
-        };
-
-        setClients(
-          fallbackIfEmpty(
-            cRowsCanon,
-            cData.columns,
-            cData.rows,
-            ["Client", "Slug", "LogoFile", "Client Lead", "Client Assist", "Last Comms Date", "Last Comms Type", "Comms Notes"]
-          ).sort((a, b) => (a.Client || "").localeCompare(b.Client || ""))
-        );
-
-        setEvents(
-          fallbackIfEmpty(
-            eRowsCanon,
-            eData.columns,
-            eData.rows,
-            ["Date", "Client", "Title", "Notes", "Priority"]
-          ).sort((a, b) => {
+        const eventsRows = mapRows(eData.columns, eData.rows)
+          .filter(o => Object.values(o).some(v => v != null && String(v).trim() !== ""))
+          .sort((a,b)=>{
             const da = a.Date ? new Date(a.Date) : null;
             const db = b.Date ? new Date(b.Date) : null;
             if (!da && !db) return 0;
             if (!da) return 1;
             if (!db) return -1;
             return da - db;
-          })
-        );
+          });
+
+        setClients(clientsRows);
+        setEvents(eventsRows);
       } catch (e) {
         setError(e.message);
       }
@@ -160,10 +84,9 @@ export default function Page() {
     if (!events) return {};
     const map = {};
     for (const ev of events) {
-      const key = ev.Client;
+      const key = ev.Client; // if you later add Slug in Events, prefer that
       if (!key) continue;
-      if (!map[key]) map[key] = [];
-      map[key].push(ev);
+      (map[key] ||= []).push(ev);
     }
     return map;
   }, [events]);
@@ -179,13 +102,9 @@ export default function Page() {
 
   return (
     <main className="max-w-7xl mx-auto p-6">
-      <header className="mb-6 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Vito Media Client Health</h1>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Live from Google Sheets — Clients + Major Upcoming Events
-          </p>
-        </div>
+      <header className="mb-6">
+        <h1 className="text-3xl font-bold tracking-tight">Vito Media Client Health</h1>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">Live from Google Sheets — Clients + Major Upcoming Events</p>
       </header>
 
       {/* Clients Grid */}
@@ -224,7 +143,12 @@ export default function Page() {
                         <span className="text-zinc-500">· {c["Last Comms Date"] || "—"}</span>
                       </div>
                     </div>
-                    <span className="px-2 py-1 rounded-full text-xs border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">
+                    <span
+                      className={classNames(
+                        "px-2 py-1 rounded-full text-xs border",
+                        "border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
+                      )}
+                    >
                       {c["Slug"] || ""}
                     </span>
                   </div>

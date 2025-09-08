@@ -1,46 +1,29 @@
 import { NextResponse } from "next/server";
 
-/**
- * Parse the raw GViz response string.
- * Returns { columns: string[], rows: any[][], table }.
- */
+/** Parse GViz wrapper and promote header row when GViz returns A,B,C... */
 function parseGviz(text) {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1) {
-    throw new Error("GViz: could not find JSON boundaries");
-  }
+  if (start === -1 || end === -1) throw new Error("GViz: malformed response");
   const obj = JSON.parse(text.slice(start, end + 1));
-  const table = obj.table;
+  const table = obj.table ?? {};
+  let columns = (table.cols || []).map(c => (c.label ?? c.id ?? "") + "");
+  let rows = (table.rows || []).map(r => (r.c || []).map(c => (c ? c.v : null)));
 
-  // initial labels (may be '', 'A', 'B', 'C', etc.)
-  let columns = (table.cols || []).map((c) => (c.label ?? c.id ?? ""));
-
-  // materialize rows as primitive values (null if missing)
-  let rows = (table.rows || []).map((r) => (r.c || []).map((cell) => (cell ? cell.v : null)));
-
-  // Detect and promote header row if labels are generic or empty.
-  const allGeneric = columns.length > 0 && columns.every((lab) => {
-    if (!lab || /^\s*$/.test(lab)) return true;
-    return /^[A-Z]+$/.test(lab.trim()); // 'A','B','C' etc.
-  });
-
-  if (allGeneric && rows.length > 0) {
-    const candidate = rows[0].map((v) => (v == null ? "" : String(v)));
-    const nonEmptyStrings = candidate.filter((s) => typeof s === "string" && s.trim().length > 0).length;
-    if (nonEmptyStrings >= Math.max(1, Math.floor(candidate.length / 2))) {
-      columns = candidate;
+  // If labels are generic (A,B,C,…) and first row looks like real headers, promote it.
+  const generic = columns.length && columns.every(x => !x || /^[A-Z]+$/.test(x.trim()));
+  if (generic && rows.length) {
+    const headerRow = rows[0].map(v => (v == null ? "" : String(v)));
+    const nonEmpty = headerRow.filter(s => s.trim()).length;
+    if (nonEmpty >= Math.max(1, Math.floor(headerRow.length / 2))) {
+      columns = headerRow.map(s => s.trim());
       rows = rows.slice(1);
     }
   }
 
-  // Trim and normalise column labels
-  columns = columns.map((s) => (s == null ? "" : String(s).trim()));
-
   // Drop fully empty rows
-  rows = rows.filter((r) => r.some((v) => v !== null && String(v).trim() !== ""));
-
-  return { columns, rows, table };
+  rows = rows.filter(r => r.some(v => v != null && String(v).trim() !== ""));
+  return { columns, rows };
 }
 
 export async function GET(req) {
@@ -48,6 +31,7 @@ export async function GET(req) {
     const { searchParams } = new URL(req.url);
     const sheetName = searchParams.get("sheet") || "Clients";
 
+    // Prefer SHEET_GVIZ_URL_BASE; fall back to SHEET_GVIZ_URL (strip any &sheet=…)
     let base =
       process.env.SHEET_GVIZ_URL_BASE ||
       (process.env.SHEET_GVIZ_URL || "").replace(/([?&])sheet=[^&]*/i, "$1").replace(/[?&]$/, "");
@@ -56,12 +40,11 @@ export async function GET(req) {
       return NextResponse.json({ error: "Missing SHEET_GVIZ_URL_BASE" }, { status: 500 });
     }
 
-    // Ensure base has ?tqx=out:json
+    // Ensure base has out:json and explicitly request row 1 as headers
     if (!/[?&]tqx=out:json/i.test(base)) {
       base += (base.includes("?") ? "&" : "?") + "tqx=out:json";
     }
-
-    const url = `${base}${base.includes("?") ? "&" : "?"}sheet=${encodeURIComponent(sheetName)}`;
+    const url = `${base}${base.includes("?") ? "&" : "?"}sheet=${encodeURIComponent(sheetName)}&headers=1`;
 
     const res = await fetch(url, { cache: "no-store", next: { revalidate: 0 } });
     if (!res.ok) {
