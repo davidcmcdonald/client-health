@@ -14,7 +14,7 @@ function parseGviz(text) {
   const table = obj.table ?? {};
 
   let columns = (table.cols || []).map((c) => (c.label ?? c.id ?? "") + "");
-  let rows = (table.rows || []).map((r) => (r.c || []).map((c) => (c ? c.v : null)));
+  let rows = (table.rows || []).map((r) => (r.c || []).map((c) => (c ? (c.f ?? c.v ?? null) : null)));
 
   // Detect "A,B,C..." style generic labels
   const generic = columns.length && columns.every((x) => !x || /^[A-Z]+$/.test(x.trim()));
