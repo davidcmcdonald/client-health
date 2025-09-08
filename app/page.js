@@ -1,3 +1,4 @@
+// app/page.js
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -54,15 +55,15 @@ export default function Page() {
         const eData = await eRes.json();
 
         const mapRows = (cols, rows) =>
-          rows.map(r => Object.fromEntries(r.map((v, i) => [cols[i], v])));
+          rows.map((r) => Object.fromEntries(r.map((v, i) => [cols[i], v])));
 
         const clientsRows = mapRows(cData.columns, cData.rows)
-          .filter(o => Object.values(o).some(v => v != null && String(v).trim() !== ""))
-          .sort((a,b)=> (a["Client"] || "").localeCompare(b["Client"] || ""));
+          .filter((o) => Object.values(o).some((v) => v != null && String(v).trim() !== ""))
+          .sort((a, b) => (a["Client"] || "").localeCompare(b["Client"] || ""));
 
         const eventsRows = mapRows(eData.columns, eData.rows)
-          .filter(o => Object.values(o).some(v => v != null && String(v).trim() !== ""))
-          .sort((a,b)=>{
+          .filter((o) => Object.values(o).some((v) => v != null && String(v).trim() !== ""))
+          .sort((a, b) => {
             const da = a.Date ? new Date(a.Date) : null;
             const db = b.Date ? new Date(b.Date) : null;
             if (!da && !db) return 0;
@@ -84,7 +85,7 @@ export default function Page() {
     if (!events) return {};
     const map = {};
     for (const ev of events) {
-      const key = ev.Client; // if you later add Slug in Events, prefer that
+      const key = ev.Client;
       if (!key) continue;
       (map[key] ||= []).push(ev);
     }
@@ -143,12 +144,7 @@ export default function Page() {
                         <span className="text-zinc-500">· {c["Last Comms Date"] || "—"}</span>
                       </div>
                     </div>
-                    <span
-                      className={classNames(
-                        "px-2 py-1 rounded-full text-xs border",
-                        "border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
-                      )}
-                    >
+                    <span className="px-2 py-1 rounded-full text-xs border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">
                       {c["Slug"] || ""}
                     </span>
                   </div>
@@ -224,9 +220,7 @@ export default function Page() {
         )}
       </section>
 
-      <footer className="mt-8 text-xs text-zinc-500">
-        Last refreshed on page load. Update Google Sheets → refresh here.
-      </footer>
+      <footer className="mt-8 text-xs text-zinc-500">Last refreshed on page load. Update Google Sheets → refresh here.</footer>
     </main>
   );
 }
