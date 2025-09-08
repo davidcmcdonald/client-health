@@ -1,56 +1,275 @@
 "use client";
-import { useEffect, useState } from "react";
 
-export default function Home() {
-  const [data, setData] = useState(null);
+import { useEffect, useMemo, useState } from "react";
+
+const COMMS_ICON = {
+  Email: "✉️",
+  Text: "💬",
+  Phone: "📞",
+};
+
+function classNames(...a) {
+  return a.filter(Boolean).join(" ");
+}
+
+function CardSkeleton() {
+  return (
+    <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/50 dark:bg-zinc-900/40 p-5 shadow-sm animate-pulse">
+      <div className="h-14 w-14 rounded-xl bg-zinc-200 dark:bg-zinc-800 mb-4" />
+      <div className="h-4 w-1/2 bg-zinc-200 dark:bg-zinc-800 mb-2" />
+      <div className="h-3 w-2/3 bg-zinc-200 dark:bg-zinc-800 mb-4" />
+      <div className="h-3 w-1/3 bg-zinc-200 dark:bg-zinc-800" />
+    </div>
+  );
+}
+
+function Logo({ slug, file }) {
+  if (file) {
+    return (
+      <img
+        src={`/logos/${file}`}
+        alt={slug}
+        className="h-14 w-14 rounded-xl object-contain bg-white"
+      />
+    );
+  }
+  const initials = (slug || "??").slice(0, 3).toUpperCase();
+  return (
+    <div className="h-14 w-14 rounded-xl flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 font-bold">
+      {initials}
+    </div>
+  );
+}
+
+export default function Page() {
+  const [clients, setClients] = useState(null);
+  const [events, setEvents] = useState(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch("/api/sheet")
-      .then((r) => r.json())
-      .then((j) => (j.error ? setError(j.error) : setData(j)))
-      .catch((e) => setError(String(e)));
+    async function load() {
+      try {
+        const [cRes, eRes] = await Promise.all([
+          fetch("/api/sheet?sheet=Clients", { cache: "no-store" }),
+          fetch("/api/sheet?sheet=Events", { cache: "no-store" }),
+        ]);
+        if (!cRes.ok) throw new Error("Failed to load Clients");
+        if (!eRes.ok) throw new Error("Failed to load Events");
+
+        const cData = await cRes.json();
+        const eData = await eRes.json();
+
+        const cCols = cData.columns;
+        const cRows = cData.rows.map((r) =>
+          Object.fromEntries(r.map((v, i) => [cCols[i], v]))
+        );
+        setClients(cRows);
+
+        const eCols = eData.columns;
+        const eRows = eData.rows.map((r) =>
+          Object.fromEntries(r.map((v, i) => [eCols[i], v]))
+        );
+        setEvents(eRows);
+      } catch (e) {
+        setError(e.message);
+      }
+    }
+    load();
   }, []);
 
+  const eventsByClient = useMemo(() => {
+    if (!events) return {};
+    const parsed = events
+      .map((ev) => ({ ...ev, _date: ev.Date ? new Date(ev.Date) : null }))
+      .filter((ev) => ev._date && !Number.isNaN(ev._date.getTime()))
+      .sort((a, b) => a._date - b._date);
+
+    const map = {};
+    for (const ev of parsed) {
+      const key = ev.Client;
+      if (!map[key]) map[key] = [];
+      map[key].push(ev);
+    }
+    return map;
+  }, [events]);
+
+  if (error) {
+    return (
+      <main className="max-w-7xl mx-auto p-6">
+        <h1 className="text-2xl font-semibold mb-4">Vito Media Client Health</h1>
+        <div className="text-red-600">Error: {error}</div>
+      </main>
+    );
+  }
+
   return (
-    <main className="p-6 max-w-5xl mx-auto">
-      <h1 className="text-2xl font-semibold mb-3">Sheet Viewer</h1>
-
-      {error && <p className="text-red-600">Error: {error}</p>}
-      {!error && !data && <p>Loading…</p>}
-
-      {data && (
-        <>
-          <p className="mb-3 opacity-70">
-            Rendering <strong>{data.rows.length}</strong> rows
+    <main className="max-w-7xl mx-auto p-6">
+      <header className="mb-6 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Vito Media Client Health</h1>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Live from Google Sheets — Clients + Major Upcoming Events
           </p>
+        </div>
+      </header>
 
-          <div className="overflow-x-auto border border-gray-200 rounded-lg">
-            <table className="w-full border-collapse">
-              <thead className="bg-gray-50">
-                <tr>
-                  {data.columns.map((c) => (
-                    <th key={c} className="text-left p-3 border-b border-gray-200 sticky top-0">
-                      {c}
-                    </th>
-                  ))}
+      {/* Clients Grid */}
+      <section>
+        <h2 className="text-xl font-semibold mb-3">Clients</h2>
+        {!clients ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <CardSkeleton key={i} />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {clients.map((c, idx) => {
+              const commsType = c["Last Comms Type"];
+              const commsIcon = COMMS_ICON[commsType] || "🗒️";
+              const nextEvent = (eventsByClient[c["Client"]] || [])[0];
+
+              return (
+                <div
+                  key={idx}
+                  className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/50 p-5 shadow-sm hover:shadow transition"
+                >
+                  <div className="flex items-center gap-4">
+                    <Logo slug={c["Slug"]} file={c["LogoFile"]} />
+                    <div>
+                      <div className="text-lg font-semibold">{c["Client"]}</div>
+                      <div className="text-xs text-zinc-500">
+                        Lead:{" "}
+                        <span className="font-medium text-zinc-700 dark:text-zinc-200">
+                          {c["Client Lead"] || "-"}
+                        </span>{" "}
+                        · Assist:{" "}
+                        <span className="font-medium text-zinc-700 dark:text-zinc-200">
+                          {c["Client Assist"] || "-"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-between">
+                    <div className="text-sm">
+                      <div className="text-zinc-500">Last comms</div>
+                      <div className="font-medium">
+                        <span className="mr-1">{commsIcon}</span>
+                        {commsType || "—"}{" "}
+                        <span className="text-zinc-500">
+                          · {c["Last Comms Date"] || "—"}
+                        </span>
+                      </div>
+                    </div>
+                    <span
+                      className={classNames(
+                        "px-2 py-1 rounded-full text-xs border",
+                        "border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
+                      )}
+                    >
+                      {c["Slug"] || ""}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 text-sm text-zinc-600 dark:text-zinc-300 line-clamp-2">
+                    {c["Comms Notes"] || ""}
+                  </div>
+
+                  <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+                    <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">
+                      Next Event
+                    </div>
+                    {nextEvent ? (
+                      <div className="flex items-center justify-between text-sm">
+                        <div>
+                          <div className="font-medium">{nextEvent.Title}</div>
+                          <div className="text-zinc-500">
+                            {nextEvent.Notes || ""}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-zinc-500">{nextEvent.Date}</div>
+                          {nextEvent.Priority && (
+                            <span className="inline-block mt-1 text-xs px-2 py-0.5 rounded-full border border-zinc-200 dark:border-zinc-800">
+                              {nextEvent.Priority}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-zinc-500">
+                        No upcoming events
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Events Table */}
+      <section className="mt-10">
+        <h2 className="text-xl font-semibold mb-3">
+          Major Upcoming Events or Campaigns
+        </h2>
+        {!events ? (
+          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-6">
+            Loading events…
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+            <table className="min-w-full text-sm">
+              <thead className="bg-zinc-50 dark:bg-zinc-900/40">
+                <tr className="text-left">
+                  <th className="px-4 py-3 font-semibold">Date</th>
+                  <th className="px-4 py-3 font-semibold">Client</th>
+                  <th className="px-4 py-3 font-semibold">Title</th>
+                  <th className="px-4 py-3 font-semibold">Notes</th>
+                  <th className="px-4 py-3 font-semibold">Priority</th>
                 </tr>
               </thead>
               <tbody>
-                {data.rows.map((row, i) => (
-                  <tr key={i} className="odd:bg-white even:bg-gray-50">
-                    {data.columns.map((c) => (
-                      <td key={c} className="p-3 border-b border-gray-100">
-                        {String(row[c] ?? "")}
+                {events
+                  .map((ev) => ({
+                    ...ev,
+                    _date: ev.Date ? new Date(ev.Date) : null,
+                  }))
+                  .filter((ev) => ev._date && !Number.isNaN(ev._date.getTime()))
+                  .sort((a, b) => a._date - b._date)
+                  .map((ev, i) => (
+                    <tr
+                      key={i}
+                      className={i % 2 ? "bg-white dark:bg-zinc-900/20" : ""}
+                    >
+                      <td className="px-4 py-3 whitespace-nowrap">{ev.Date}</td>
+                      <td className="px-4 py-3">{ev.Client}</td>
+                      <td className="px-4 py-3 font-medium">{ev.Title}</td>
+                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">
+                        {ev.Notes || ""}
                       </td>
-                    ))}
-                  </tr>
-                ))}
+                      <td className="px-4 py-3">
+                        {ev.Priority ? (
+                          <span className="inline-block text-xs px-2 py-1 rounded-full border border-zinc-200 dark:border-zinc-800">
+                            {ev.Priority}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>
-        </>
-      )}
+        )}
+      </section>
+
+      <footer className="mt-8 text-xs text-zinc-500">
+        Last refreshed on page load. Update Google Sheets → refresh here.
+      </footer>
     </main>
   );
 }
