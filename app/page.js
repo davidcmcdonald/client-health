@@ -2,15 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-const COMMS_ICON = {
-  Email: "✉️",
-  Text: "💬",
-  Phone: "📞",
-};
+// Emoji for comms channel — easy to swap for SVGs later
+const COMMS_ICON = { Email: "✉️", Text: "💬", Phone: "📞" };
 
-function classNames(...a) {
-  return a.filter(Boolean).join(" ");
-}
+function classNames(...a) { return a.filter(Boolean).join(" "); }
 
 function CardSkeleton() {
   return (
@@ -33,12 +28,69 @@ function Logo({ slug, file }) {
       />
     );
   }
-  const initials = (slug || "??").slice(0, 3).toUpperCase();
+  const initials = (slug || "??").toString().slice(0, 3).toUpperCase();
   return (
     <div className="h-14 w-14 rounded-xl flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 font-bold">
       {initials}
     </div>
   );
+}
+
+/* ---------------------------
+   Header normalisation utils
+---------------------------- */
+const norm = (s) =>
+  (s || "")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[_\-\/]+/g, " ")
+    .replace(/\s+/g, " ");
+
+const CLIENT_KEY_MAP = {
+  // canonical -> accepted variants
+  "Client": ["client", "client name", "name"],
+  "Slug": ["slug", "client code", "code", "short code"],
+  "LogoFile": ["logofile", "logo file", "logo", "logo filename", "logo path"],
+  "Client Lead": ["client lead", "lead", "client lead (primary)", "client lead (lead)"],
+  "Client Assist": ["client assist", "assist", "assistant", "secondary"],
+  "Last Comms Date": ["last comms date", "last comms", "last communication date", "last contact date"],
+  "Last Comms Type": ["last comms type", "last comms channel", "last communication type", "last contact type"],
+  "Comms Notes": ["comms notes", "notes", "last comms notes", "comments"],
+};
+
+const EVENTS_KEY_MAP = {
+  "Date": ["date", "event date"],
+  "Client": ["client", "client name"],
+  "Title": ["title", "event", "campaign"],
+  "Notes": ["notes", "detail", "description"],
+  "Priority": ["priority", "prio"],
+};
+
+function buildIndexMap(headers, keyMap) {
+  // headers: array of column labels from GViz
+  const hNorm = headers.map((h) => norm(h));
+  const out = {}; // canonical -> index
+  Object.entries(keyMap).forEach(([canonical, variants]) => {
+    const firstIdx = hNorm.findIndex((h) => variants.includes(h));
+    if (firstIdx !== -1) out[canonical] = firstIdx;
+  });
+  return out;
+}
+
+function mapRowsToCanonical(headers, rows, keyMap) {
+  const idxMap = buildIndexMap(headers, keyMap);
+  return rows.map((r) => {
+    const obj = {};
+    Object.entries(idxMap).forEach(([canonical, i]) => {
+      obj[canonical] = r[i] ?? null;
+    });
+    return obj;
+  });
+}
+
+function hasAnyValue(obj) {
+  return Object.values(obj).some((v) => v !== null && v !== "" && v !== undefined);
 }
 
 export default function Page() {
@@ -59,17 +111,56 @@ export default function Page() {
         const cData = await cRes.json();
         const eData = await eRes.json();
 
-        const cCols = cData.columns;
-        const cRows = cData.rows.map((r) =>
-          Object.fromEntries(r.map((v, i) => [cCols[i], v]))
-        );
-        setClients(cRows);
+        // Convert [[values]] into canonical objects, tolerate header variations
+        const cRowsRaw = cData.rows.map((r) => Object.fromEntries(r.map((v, i) => [cData.columns[i], v])));
+        const eRowsRaw = eData.rows.map((r) => Object.fromEntries(r.map((v, i) => [eData.columns[i], v])));
 
-        const eCols = eData.columns;
-        const eRows = eData.rows.map((r) =>
-          Object.fromEntries(r.map((v, i) => [eCols[i], v]))
+        const cRowsCanon = mapRowsToCanonical(cData.columns, cData.rows, CLIENT_KEY_MAP)
+          .filter(hasAnyValue)
+          .map((row) => ({
+            // sensible fallbacks
+            ...row,
+            Slug: row["Slug"] || "", // if empty, UI will show ?? on the logo
+            LogoFile: row["LogoFile"] || "",
+          }));
+
+        const eRowsCanon = mapRowsToCanonical(eData.columns, eData.rows, EVENTS_KEY_MAP)
+          .filter(hasAnyValue)
+          .map((row) => ({
+            ...row,
+            // normalise date to YYYY-MM-DD if GViz formatted string exists in original raw row
+            Date: row.Date || null,
+          }));
+
+        // If we failed to map (e.g., headers are already canonical), fall back to exact names
+        const fallbackIfEmpty = (arr, raw, expectedKeys) => {
+          if (arr.length > 0) return arr;
+          const clean = raw.map((o) => {
+            const out = {};
+            expectedKeys.forEach((k) => (out[k] = o[k] ?? null));
+            return out;
+          }).filter(hasAnyValue);
+          return clean;
+        };
+
+        setClients(
+          fallbackIfEmpty(cRowsCanon, cRowsRaw, [
+            "Client", "Slug", "LogoFile", "Client Lead", "Client Assist", "Last Comms Date", "Last Comms Type", "Comms Notes",
+          ]).sort((a, b) => (a.Client || "").localeCompare(b.Client || ""))
         );
-        setEvents(eRows);
+
+        setEvents(
+          fallbackIfEmpty(eRowsCanon, eRowsRaw, [
+            "Date", "Client", "Title", "Notes", "Priority",
+          ]).sort((a, b) => {
+            const da = a.Date ? new Date(a.Date) : null;
+            const db = b.Date ? new Date(b.Date) : null;
+            if (!da && !db) return 0;
+            if (!da) return 1;
+            if (!db) return -1;
+            return da - db;
+          })
+        );
       } catch (e) {
         setError(e.message);
       }
@@ -79,14 +170,10 @@ export default function Page() {
 
   const eventsByClient = useMemo(() => {
     if (!events) return {};
-    const parsed = events
-      .map((ev) => ({ ...ev, _date: ev.Date ? new Date(ev.Date) : null }))
-      .filter((ev) => ev._date && !Number.isNaN(ev._date.getTime()))
-      .sort((a, b) => a._date - b._date);
-
     const map = {};
-    for (const ev of parsed) {
+    for (const ev of events) {
       const key = ev.Client;
+      if (!key) continue;
       if (!map[key]) map[key] = [];
       map[key].push(ev);
     }
@@ -118,9 +205,7 @@ export default function Page() {
         <h2 className="text-xl font-semibold mb-3">Clients</h2>
         {!clients ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <CardSkeleton key={i} />
-            ))}
+            {Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -130,23 +215,14 @@ export default function Page() {
               const nextEvent = (eventsByClient[c["Client"]] || [])[0];
 
               return (
-                <div
-                  key={idx}
-                  className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/50 p-5 shadow-sm hover:shadow transition"
-                >
+                <div key={idx} className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/50 p-5 shadow-sm hover:shadow transition">
                   <div className="flex items-center gap-4">
                     <Logo slug={c["Slug"]} file={c["LogoFile"]} />
                     <div>
-                      <div className="text-lg font-semibold">{c["Client"]}</div>
+                      <div className="text-lg font-semibold">{c["Client"] || "—"}</div>
                       <div className="text-xs text-zinc-500">
-                        Lead:{" "}
-                        <span className="font-medium text-zinc-700 dark:text-zinc-200">
-                          {c["Client Lead"] || "-"}
-                        </span>{" "}
-                        · Assist:{" "}
-                        <span className="font-medium text-zinc-700 dark:text-zinc-200">
-                          {c["Client Assist"] || "-"}
-                        </span>
+                        Lead: <span className="font-medium text-zinc-700 dark:text-zinc-200">{c["Client Lead"] || "-"}</span> ·{" "}
+                        Assist: <span className="font-medium text-zinc-700 dark:text-zinc-200">{c["Client Assist"] || "-"}</span>
                       </div>
                     </div>
                   </div>
@@ -157,17 +233,10 @@ export default function Page() {
                       <div className="font-medium">
                         <span className="mr-1">{commsIcon}</span>
                         {commsType || "—"}{" "}
-                        <span className="text-zinc-500">
-                          · {c["Last Comms Date"] || "—"}
-                        </span>
+                        <span className="text-zinc-500">· {c["Last Comms Date"] || "—"}</span>
                       </div>
                     </div>
-                    <span
-                      className={classNames(
-                        "px-2 py-1 rounded-full text-xs border",
-                        "border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
-                      )}
-                    >
+                    <span className="px-2 py-1 rounded-full text-xs border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">
                       {c["Slug"] || ""}
                     </span>
                   </div>
@@ -177,16 +246,12 @@ export default function Page() {
                   </div>
 
                   <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
-                    <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">
-                      Next Event
-                    </div>
+                    <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Next Event</div>
                     {nextEvent ? (
                       <div className="flex items-center justify-between text-sm">
                         <div>
                           <div className="font-medium">{nextEvent.Title}</div>
-                          <div className="text-zinc-500">
-                            {nextEvent.Notes || ""}
-                          </div>
+                          <div className="text-zinc-500">{nextEvent.Notes || ""}</div>
                         </div>
                         <div className="text-right">
                           <div className="text-zinc-500">{nextEvent.Date}</div>
@@ -198,9 +263,7 @@ export default function Page() {
                         </div>
                       </div>
                     ) : (
-                      <div className="text-sm text-zinc-500">
-                        No upcoming events
-                      </div>
+                      <div className="text-sm text-zinc-500">No upcoming events</div>
                     )}
                   </div>
                 </div>
@@ -212,13 +275,9 @@ export default function Page() {
 
       {/* Events Table */}
       <section className="mt-10">
-        <h2 className="text-xl font-semibold mb-3">
-          Major Upcoming Events or Campaigns
-        </h2>
+        <h2 className="text-xl font-semibold mb-3">Major Upcoming Events or Campaigns</h2>
         {!events ? (
-          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-6">
-            Loading events…
-          </div>
+          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-6">Loading events…</div>
         ) : (
           <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
             <table className="min-w-full text-sm">
@@ -232,35 +291,21 @@ export default function Page() {
                 </tr>
               </thead>
               <tbody>
-                {events
-                  .map((ev) => ({
-                    ...ev,
-                    _date: ev.Date ? new Date(ev.Date) : null,
-                  }))
-                  .filter((ev) => ev._date && !Number.isNaN(ev._date.getTime()))
-                  .sort((a, b) => a._date - b._date)
-                  .map((ev, i) => (
-                    <tr
-                      key={i}
-                      className={i % 2 ? "bg-white dark:bg-zinc-900/20" : ""}
-                    >
-                      <td className="px-4 py-3 whitespace-nowrap">{ev.Date}</td>
-                      <td className="px-4 py-3">{ev.Client}</td>
-                      <td className="px-4 py-3 font-medium">{ev.Title}</td>
-                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">
-                        {ev.Notes || ""}
-                      </td>
-                      <td className="px-4 py-3">
-                        {ev.Priority ? (
-                          <span className="inline-block text-xs px-2 py-1 rounded-full border border-zinc-200 dark:border-zinc-800">
-                            {ev.Priority}
-                          </span>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                {events.map((ev, i) => (
+                  <tr key={i} className={i % 2 ? "bg-white dark:bg-zinc-900/20" : ""}>
+                    <td className="px-4 py-3 whitespace-nowrap">{ev.Date || "—"}</td>
+                    <td className="px-4 py-3">{ev.Client || "—"}</td>
+                    <td className="px-4 py-3 font-medium">{ev.Title || "—"}</td>
+                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">{ev.Notes || ""}</td>
+                    <td className="px-4 py-3">
+                      {ev.Priority ? (
+                        <span className="inline-block text-xs px-2 py-1 rounded-full border border-zinc-200 dark:border-zinc-800">
+                          {ev.Priority}
+                        </span>
+                      ) : "—"}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
