@@ -51,18 +51,24 @@ function toMonthIndex(m){
   const n=Number(s); if(!Number.isNaN(n)) return Math.max(1,Math.min(12,n))-1;
   return null;
 }
-/* red = not_complete, orange = nearly_complete, yellow = complete_not_sent, green = complete_sent, gray = no_plan */
-function monthStatus(rec){
-  if(!rec||(rec.planned??0)===0) return "no_plan";
-  const p=rec.planned||0, d=rec.done||0, s=rec.sent||0;
-  if(d===0) return "not_complete";
-  if(d<p)   return "nearly_complete";
-  if(d>=p && s<p) return "complete_not_sent";
-  if(d>=p && s>=p) return "complete_sent";
-  return "nearly_complete";
+
+/* ----- Monthly single-state model (planned/done/sent) ----- */
+function normalizeMonthState(s){
+  const raw=String(s||"").trim().toLowerCase();
+  if(["planned","plan","p"].includes(raw)) return "planned";
+  if(["done","complete","completed","d"].includes(raw)) return "done";
+  if(["sent","delivered","s"].includes(raw)) return "sent";
+  return null; // unknown or blank
+}
+/* Map month state to pill visual: planned→orange, done→yellow, sent→green, blank→grey */
+function pillFromMonthState(state){
+  if(state==="planned") return "planned";
+  if(state==="done")    return "done";
+  if(state==="sent")    return "sent";
+  return "no_plan";
 }
 
-/* Status normalisation + per-client parsing */
+/* Status normalisation + per-client parsing (Events) */
 function normalizeStatus(s){
   const raw=String(s||"").toLowerCase().replace(/\s+/g," ").trim();
   return STATUS_LABELS.find(x=>x===raw) || null;
@@ -88,11 +94,10 @@ function Logo({ slug, file }){
 }
 function MonthPill({label,status}){
   const styles={
-    complete_sent:"bg-emerald-500 text-white",
-    complete_not_sent:"bg-yellow-400 text-zinc-900",
-    nearly_complete:"bg-orange-500 text-white",
-    not_complete:"bg-rose-500 text-white",
-    no_plan:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
+    sent:"bg-emerald-500 text-white",           // green
+    done:"bg-yellow-400 text-zinc-900",         // yellow
+    planned:"bg-orange-500 text-white",         // orange
+    no_plan:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300", // grey
   }[status||"no_plan"];
   return <span className={cn("px-2.5 py-1 rounded-full text-xs font-medium",styles)}>{label}</span>;
 }
@@ -172,7 +177,7 @@ export default function Page(){
 
   const slugToName=useMemo(()=>{ const map={}; (clients||[]).forEach(c=>{ if(c.Slug) map[normalizeSlug(c.Slug)]=c.Client; }); return map; },[clients]);
 
-  // slug -> year -> monthIndex -> record
+  // slug -> year -> monthIndex -> { state }
   const currentYear=new Date().getFullYear();
   const monthDataBySlug=useMemo(()=>{
     const out={}; if(!monthly) return out;
@@ -180,9 +185,9 @@ export default function Page(){
       const slug=normalizeSlug(row.Slug||row.slug);
       const year=Number(row.Year||row.year);
       const mIdx=toMonthIndex(row.Month);
-      const planned=Number(row.Planned||0), done=Number(row.Done||0), sent=Number(row.Sent||0);
+      const state=normalizeMonthState(row.Status || row.status);
       if(!slug || Number.isNaN(year) || mIdx==null) continue;
-      out[slug] ||= {}; out[slug][year] ||= {}; out[slug][year][mIdx] = {planned,done,sent};
+      out[slug] ||= {}; out[slug][year] ||= {}; out[slug][year][mIdx] = {state};
     }
     return out;
   },[monthly]);
@@ -207,7 +212,7 @@ export default function Page(){
     );
   },[clients,q]);
 
-  // top KPIs
+  // top KPIs (LQR + comms freshness)
   const kpis=useMemo(()=>{
     if(!clients) return null;
     let up=0, soon=0, due=0, commsFresh=0, commsStale=0;
@@ -266,16 +271,14 @@ export default function Page(){
           </section>
         )}
 
-        {/* Legend */}
+        {/* Legend (planned/done/sent + grey) */}
         <section className="mt-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 p-4">
           <div className="text-xs font-medium mb-2 text-zinc-600 dark:text-zinc-300">Legend</div>
           <div className="flex flex-wrap gap-3 text-xs">
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-emerald-500"></span>Complete & sent</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-yellow-400"></span>Complete, not sent</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-orange-500"></span>Nearly complete</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-rose-500"></span>Not complete</span>
+            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-emerald-500"></span>Sent</span>
+            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-yellow-400"></span>Done</span>
+            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-orange-500"></span>Planned</span>
             <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>No plan</span>
-            <span className="inline-flex items-center gap-2 ml-auto"><span className="h-3 w-5 rounded bg-emerald-500"></span>LQR ≤3mo <span className="h-3 w-5 rounded bg-orange-500 ml-2"></span>4mo <span className="h-3 w-5 rounded bg-rose-500 ml-2"></span>≥5mo</span>
           </div>
         </section>
 
@@ -295,8 +298,13 @@ export default function Page(){
               const commsPill=commsRecency(commsDate);
 
               const monthsForYear=monthDataBySlug[slug]?.[currentYear] || {};
-              const pills=MONTHS_SHORT.map((label,i)=>({label,status:monthStatus(monthsForYear[i])}));
+              const pills=MONTHS_SHORT.map((label,i)=>{
+                const rec=monthsForYear[i];
+                const state=rec?.state || null;
+                return {label, status: pillFromMonthState(state)};
+              });
 
+              // next event (shared Events with per-client status)
               const nextEvent=(eventsBySlug[slug] || []).find(e=>e._date>=new Date());
               const nextStatus = nextEvent ? (nextEvent._statusByClient[slug] || nextEvent._statusDefault || "no content organised or needed") : null;
 
