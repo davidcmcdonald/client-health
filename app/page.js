@@ -37,7 +37,7 @@ function Logo({ slug, file }) {
   );
 }
 
-/* ---------------- helpers for Monthly tab ---------------- */
+/* ---------------- helpers ---------------- */
 function toMonthIndex(m) {
   if (m == null || m === "") return null;
   if (typeof m === "number") return Math.max(1, Math.min(12, m)) - 1;
@@ -52,7 +52,33 @@ function toMonthIndex(m) {
   return null;
 }
 
-// status mapping:
+function dateFromSheet(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function formatDate(d) {
+  return d ? d.toLocaleDateString(undefined, { day:"numeric", month:"short", year:"numeric" }) : "—";
+}
+
+/** Whole months difference (floored) between d1 -> d2 */
+function monthsBetween(d1, d2) {
+  if (!d1 || !d2) return null;
+  let months = (d2.getFullYear() - d1.getFullYear()) * 12 + (d2.getMonth() - d1.getMonth());
+  if (d2.getDate() < d1.getDate()) months -= 1;
+  return Math.max(0, months);
+}
+
+/** LQR status: green <=3mo, orange ==4mo, red >=5mo, grey if missing */
+function lqrStatus(date) {
+  const m = monthsBetween(date, new Date());
+  if (m == null) return { label: "—", cls: "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" };
+  if (m <= 3) return { label: "Up to date", cls: "bg-emerald-500 text-white" };
+  if (m === 4) return { label: "Due soon", cls: "bg-orange-500 text-white" };
+  return { label: "Overdue", cls: "bg-rose-500 text-white" };
+}
+
+// Monthly chip status (per-month deliverables):
 // red = not_complete, orange = nearly_complete, yellow = complete_not_sent, green = complete_sent, gray = no_plan
 function monthStatus(rec) {
   if (!rec || (rec.planned ?? 0) === 0) return "no_plan";
@@ -170,6 +196,8 @@ export default function Page() {
     );
   }
 
+  const nowYear = currentYear;
+
   return (
     <main className="max-w-7xl mx-auto p-6">
       <header className="mb-6">
@@ -189,12 +217,17 @@ export default function Page() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {clients.map((c, idx) => {
+              const slug = c["Slug"] || "";
               const commsType = c["Last Comms Type"];
               const commsIcon = COMMS_ICON[commsType] || "🗒️";
               const nextEvent = (eventsByClient[c["Client"]] || [])[0];
 
-              const slug = c["Slug"] || "";
-              const monthsForYear = monthDataBySlug[slug]?.[currentYear] || {};
+              // Last Quarterly Review pill (colour by age)
+              const lqrDate = dateFromSheet(c["Last Quarterly Review"]);
+              const lqr = lqrStatus(lqrDate);
+
+              // Month chips for current year
+              const monthsForYear = monthDataBySlug[slug]?.[nowYear] || {};
               const pills = MONTHS_SHORT.map((label, i) => {
                 const rec = monthsForYear[i];
                 return { label, status: monthStatus(rec) };
@@ -206,9 +239,17 @@ export default function Page() {
                     <Logo slug={slug} file={c["LogoFile"]} />
                     <div>
                       <div className="text-lg font-semibold">{c["Client"] || "—"}</div>
-                      <div className="text-xs text-zinc-500">
-                        Lead: <span className="font-medium text-zinc-700 dark:text-zinc-200">{c["Client Lead"] || "-"}</span> ·{" "}
-                        Assist: <span className="font-medium text-zinc-700 dark:text-zinc-200">{c["Client Assist"] || "-"}</span>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                        <span className="text-zinc-500">
+                          Lead: <span className="font-medium text-zinc-700 dark:text-zinc-200">{c["Client Lead"] || "-"}</span>
+                        </span>
+                        <span className="text-zinc-500">
+                          · Assist: <span className="font-medium text-zinc-700 dark:text-zinc-200">{c["Client Assist"] || "-"}</span>
+                        </span>
+                        {/* LQR pill */}
+                        <span className={classNames("ml-2 rounded-full px-2 py-0.5", "text-xs font-medium", lqr.cls)}>
+                          LQR {formatDate(lqrDate)}
+                        </span>
                       </div>
                     </div>
                   </div>
