@@ -1,11 +1,11 @@
 // app/api/sheet/route.js
 import { NextResponse } from "next/server";
 
-// Make sure this route never gets statically cached
+// Never cache
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/** Parse the GViz wrapper and, if needed, promote the first data row to headers. */
+/** Robust GViz parser that tolerates headerless sheets and empty rows */
 function parseGviz(text) {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
@@ -13,14 +13,16 @@ function parseGviz(text) {
   const obj = JSON.parse(text.slice(start, end + 1));
   const table = obj.table ?? {};
 
-  let columns = (table.cols || []).map((c) => (c.label ?? c.id ?? "") + "");
-  let rows = (table.rows || []).map((r) => (r.c || []).map((c) => (c ? (c.f ?? c.v ?? null) : null)));
+  // c.f contains the formatted string, c.v contains the raw value; prefer formatted
+  const getVal = (c) => (c && (c.f ?? c.v)) ?? null;
 
-  // Detect "A,B,C..." style generic labels
+  let columns = (table.cols || []).map((c) => (c.label ?? c.id ?? "") + "");
+  let rows = (table.rows || []).map((r) => (r.c || []).map(getVal));
+
+  // Detect generic A,B,C... labels; if so, promote first row to headers
   const generic = columns.length && columns.every((x) => !x || /^[A-Z]+$/.test(x.trim()));
   let promoted = false;
 
-  // If generic, treat the first row as the header row (if it looks header-ish)
   if (generic && rows.length) {
     const headerRow = rows[0].map((v) => (v == null ? "" : String(v)));
     const nonEmpty = headerRow.filter((s) => s.trim()).length;
@@ -43,7 +45,7 @@ export async function GET(req) {
     const sheetName = searchParams.get("sheet") || "Clients";
     const debug = searchParams.get("debug") === "1";
 
-    // Prefer the BASE var; fall back to SHEET_GVIZ_URL and strip any &sheet=...
+    // Prefer BASE var; fall back to SHEET_GVIZ_URL and strip any &sheet=...
     let base =
       process.env.SHEET_GVIZ_URL_BASE ||
       (process.env.SHEET_GVIZ_URL || "")
@@ -51,16 +53,14 @@ export async function GET(req) {
         .replace(/[?&]$/, "");
 
     if (!base) {
-      return NextResponse.json({ error: "Missing SHEET_GVIZ_URL_BASE" }, { status: 500 });
+      return NextResponse.json({ error: "Missing SHEET_GVIZ_URL_BASE or SHEET_GVIZ_URL" }, { status: 500 });
     }
 
-    // Ensure out:json, then add headers=1 (ask GViz to use row 1 as headers)
+    // Ensure out:json; add &sheet=...&headers=1
     if (!/[?&]tqx=out:json/i.test(base)) {
       base += (base.includes("?") ? "&" : "?") + "tqx=out:json";
     }
-    const url = `${base}${base.includes("?") ? "&" : "?"}sheet=${encodeURIComponent(
-      sheetName
-    )}&headers=1`;
+    const url = `${base}${base.includes("?") ? "&" : "?"}sheet=${encodeURIComponent(sheetName)}&headers=1`;
 
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) {
@@ -71,7 +71,6 @@ export async function GET(req) {
     const parsed = parseGviz(text);
 
     if (debug) {
-      // Helpful one-time check at /api/sheet?sheet=Clients&debug=1
       return NextResponse.json({
         sheet: sheetName,
         columns: parsed.columns,

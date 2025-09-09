@@ -196,8 +196,8 @@ export default function Page(){
   const [clients,setClients]=useState(null);
   const [events,setEvents]=useState(null);
   const [monthly,setMonthly]=useState(null);
-  const [team,setTeam]=useState(null);        // NEW
-  const [contacts,setContacts]=useState(null);// NEW
+  const [team,setTeam]=useState(null);
+  const [contacts,setContacts]=useState(null);
   const [error,setError]=useState("");
   const [q,setQ]=useState("");
   const { toggle, mounted } = useTheme();
@@ -208,18 +208,19 @@ export default function Page(){
           fetch("/api/sheet?sheet=Clients",{cache:"no-store"}),
           fetch("/api/sheet?sheet=Events",{cache:"no-store"}),
           fetch("/api/sheet?sheet=Monthly",{cache:"no-store"}),
-          fetch("/api/sheet?sheet=Team",{cache:"no-store"}),      // NEW
-          fetch("/api/sheet?sheet=Contacts",{cache:"no-store"}), // NEW
+          fetch("/api/sheet?sheet=Team",{cache:"no-store"}),
+          fetch("/api/sheet?sheet=Contacts",{cache:"no-store"}),
         ]);
         if(!cRes.ok) throw new Error("Failed to load Clients");
         if(!eRes.ok) throw new Error("Failed to load Events");
         if(!mRes.ok) throw new Error("Failed to load Monthly");
-        // Team/Contacts are optional but recommended
+
         const [cData,eData,mData,tData,ctData]=await Promise.all([
           cRes.json(), eRes.json(), mRes.json(),
           tRes.ok ? tRes.json() : Promise.resolve({columns:[],rows:[]}),
           ctRes.ok ? ctRes.json() : Promise.resolve({columns:[],rows:[]}),
         ]);
+
         const mapRows=(cols,rows)=>rows.map(r=>Object.fromEntries(r.map((v,i)=>[cols[i],v])));
 
         setClients(
@@ -227,6 +228,7 @@ export default function Page(){
             .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
             .sort((a,b)=>(a["Client"]||"").localeCompare(b["Client"]||""))
         );
+
         setEvents(
           mapRows(eData.columns,eData.rows)
             .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
@@ -240,16 +242,18 @@ export default function Page(){
             .filter(o=>o._date)
             .sort((a,b)=>a._date-b._date)
         );
+
         setMonthly(
           mapRows(mData.columns,mData.rows)
             .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
         );
+
         setTeam(mapRows(tData.columns,tData.rows));
         setContacts(mapRows(ctData.columns,ctData.rows));
       }catch(e){ setError(e.message); }
   })(); },[]);
 
-  // Team: build maps
+  // Team maps
   const teamByName=useMemo(()=>{
     const map={};
     (team||[]).forEach(p=>{
@@ -260,19 +264,22 @@ export default function Page(){
     });
     return map;
   },[team]);
-
   const leadsBySlug = useMemo(()=>{
     const out={}; (team||[]).forEach(t=>{
-      splitCodes(t.Leads).forEach(s=>{ (out[s] ||= []).push(t); });
+      (String(t.Leads||"")).split(/[,;\s]+/).forEach(s=>{
+        const slug=normalizeSlug(s); if(slug) (out[slug] ||= []).push(t);
+      });
     }); return out;
   },[team]);
   const assistsBySlug = useMemo(()=>{
     const out={}; (team||[]).forEach(t=>{
-      splitCodes(t.Assists).forEach(s=>{ (out[s] ||= []).push(t); });
+      (String(t.Assists||"")).split(/[,;\s]+/).forEach(s=>{
+        const slug=normalizeSlug(s); if(slug) (out[slug] ||= []).push(t);
+      });
     }); return out;
   },[team]);
 
-  // Contacts: slug -> {primary, secondary, notes}
+  // Contacts map
   const contactsBySlug = useMemo(()=>{
     const m={}; (contacts||[]).forEach(r=>{
       const slug=normalizeSlug(r.Slug);
@@ -289,7 +296,7 @@ export default function Page(){
     }); return m;
   },[contacts]);
 
-  // slug -> year -> monthIndex -> { state }
+  // Monthly data: slug -> year -> monthIndex -> { state }
   const currentYear=new Date().getFullYear();
   const monthDataBySlug=useMemo(()=>{
     const out={}; if(!monthly) return out;
@@ -304,7 +311,7 @@ export default function Page(){
     return out;
   },[monthly]);
 
-  // events by slug
+  // Events grouped by slug
   const eventsBySlug=useMemo(()=>{
     if(!events) return {};
     const m={};
@@ -312,7 +319,7 @@ export default function Page(){
     return m;
   },[events]);
 
-  // search
+  // Search
   const filtered=useMemo(()=>{
     if(!clients) return null;
     if(!q) return clients;
@@ -325,7 +332,7 @@ export default function Page(){
     );
   },[clients,q]);
 
-  // top KPIs
+  // KPIs
   const kpis=useMemo(()=>{
     if(!clients) return null;
     let up=0, soon=0, due=0, commsFresh=0, commsStale=0;
@@ -353,7 +360,7 @@ export default function Page(){
       <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60%_50%_at_10%_0%,rgba(16,185,129,0.12),transparent_60%),radial-gradient(50%_50%_at_100%_0%,rgba(59,130,246,0.10),transparent_50%),linear-gradient(to_bottom,#fafafa,transparent_30%)] dark:bg-[radial-gradient(60%_50%_at_10%_0%,rgba(16,185,129,0.12),transparent_60%),radial-gradient(50%_50%_at_100%_0%,rgba(59,130,246,0.10),transparent_50%),linear-gradient(to_bottom,#0b0b0b,transparent_30%)]"></div>
 
       <div className="max-w-7xl mx-auto p-6 text-zinc-900 dark:text-zinc-100">
-        {/* Header bar */}
+        {/* Header */}
         <header className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/60 backdrop-blur-sm px-5 py-4 shadow-sm">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-3">
@@ -373,7 +380,6 @@ export default function Page(){
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400">🔎</span>
               </div>
 
-              {/* Theme toggle */}
               {mounted && (
                 <button
                   onClick={()=>toggle()}
@@ -410,7 +416,7 @@ export default function Page(){
           </div>
         </section>
 
-        {/* Clients */}
+        {/* Clients grid */}
         {!filtered ? (
           <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {Array.from({length:6}).map((_,i)=><CardSkeleton key={i}/>)}
@@ -420,20 +426,18 @@ export default function Page(){
             {filtered.map((c,idx)=>{
               const slug=normalizeSlug(c.Slug);
 
-              // Team (from Team sheet; fallback to Clients sheet names)
+              // Team (sheet) with fallback to Clients names
               const teamLeads = leadsBySlug[slug] || [];
               const teamAssists = assistsBySlug[slug] || [];
               const fallbackLeads = !teamLeads.length ? splitNames(c["Client Lead"]).map(n => ({ Name:n })) : [];
               const fallbackAssists = !teamAssists.length ? splitNames(c["Client Assist"]).map(n => ({ Name:n })) : [];
 
-              // LQR + comms
               const lqr=lqrStatus(dateFromSheet(c["Last Quarterly Review"]));
               const commsType=c["Last Comms Type"];
               const commsIcon=COMMS_ICON[commsType] || "🗒️";
               const commsDate=dateFromSheet(c["Last Comms Date"]);
               const commsPill=commsRecency(commsDate);
 
-              // months
               const monthsForYear=monthDataBySlug[slug]?.[currentYear] || {};
               const pills=MONTHS_SHORT.map((label,i)=>{
                 const rec=monthsForYear[i];
@@ -441,22 +445,20 @@ export default function Page(){
                 return {label, status: pillFromMonthState(state)};
               });
 
-              // next event
               const nextEvent=(eventsBySlug[slug] || []).find(e=>e._date>=new Date());
               const nextStatus = nextEvent ? (nextEvent._statusByClient[slug] || nextEvent._statusDefault || "no content organised or needed") : null;
 
-              // client contacts
               const cc = contactsBySlug[slug];
 
               return (
                 <div key={idx} className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/85 dark:bg-zinc-900/70 p-5 shadow-sm hover:shadow-md transition">
-                  {/* top: logo + name + slug */}
+                  {/* top */}
                   <div className="flex items-center gap-4">
                     <Logo slug={slug} file={c.LogoFile}/>
                     <div className="min-w-0">
                       <div className="text-lg font-semibold truncate">{c.Client || "—"}</div>
 
-                      {/* Team (hoverable) */}
+                      {/* Team hover chips */}
                       <div className="mt-1 flex flex-col gap-1 text-xs">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-zinc-500">Lead:</span>
@@ -481,7 +483,7 @@ export default function Page(){
                     <span className="ml-auto px-2 py-1 rounded-full text-xs border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">{slug}</span>
                   </div>
 
-                  {/* client contacts (external) */}
+                  {/* client contacts */}
                   {(cc?.primary || cc?.secondary) && (
                     <div className="mt-3 text-xs">
                       <div className="text-zinc-500 mb-1">Client Contacts</div>
