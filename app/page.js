@@ -165,13 +165,31 @@ function CardSkeleton(){
   );
 }
 
-/* Generic hover badge (tooltip) */
+/* Small generic tooltip chip */
+function Chip({label,children,variant="plain"}){
+  const base="relative group inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border";
+  const styles={
+    plain: "border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950",
+    info:  "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900",
+  }[variant];
+  return (
+    <span className={cn(base,styles)}>
+      {label}
+      <span className="pointer-events-none absolute left-0 top-[120%] z-30 hidden w-72 group-hover:block">
+        <span className="block rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 shadow-xl">
+          {children}
+        </span>
+      </span>
+    </span>
+  );
+}
+
+/* Generic hover badge (person) */
 function PersonBadge({ name, person, prefix }){
   return (
     <span className="relative group inline-flex items-center gap-1 cursor-help underline decoration-dotted underline-offset-2">
       {prefix && <span className="text-zinc-500">{prefix}:</span>}
       <span>{name}</span>
-      {/* tooltip */}
       <span className="pointer-events-none absolute left-0 top-[120%] z-20 hidden w-64 group-hover:block">
         <span className="block rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 shadow-xl">
           <div className="text-sm font-medium">{person?.Name || name}</div>
@@ -198,27 +216,30 @@ export default function Page(){
   const [monthly,setMonthly]=useState(null);
   const [team,setTeam]=useState(null);
   const [contacts,setContacts]=useState(null);
+  const [scope,setScope]=useState(null);     // NEW: scope for hover
   const [error,setError]=useState("");
   const [q,setQ]=useState("");
   const { toggle, mounted } = useTheme();
 
   useEffect(()=>{ (async()=>{
       try{
-        const [cRes,eRes,mRes,tRes,ctRes]=await Promise.all([
+        const [cRes,eRes,mRes,tRes,ctRes,sRes]=await Promise.all([
           fetch("/api/sheet?sheet=Clients",{cache:"no-store"}),
           fetch("/api/sheet?sheet=Events",{cache:"no-store"}),
           fetch("/api/sheet?sheet=Monthly",{cache:"no-store"}),
           fetch("/api/sheet?sheet=Team",{cache:"no-store"}),
           fetch("/api/sheet?sheet=Contacts",{cache:"no-store"}),
+          fetch("/api/sheet?sheet=Scope",{cache:"no-store"}), // NEW
         ]);
         if(!cRes.ok) throw new Error("Failed to load Clients");
         if(!eRes.ok) throw new Error("Failed to load Events");
         if(!mRes.ok) throw new Error("Failed to load Monthly");
 
-        const [cData,eData,mData,tData,ctData]=await Promise.all([
+        const [cData,eData,mData,tData,ctData,sData]=await Promise.all([
           cRes.json(), eRes.json(), mRes.json(),
           tRes.ok ? tRes.json() : Promise.resolve({columns:[],rows:[]}),
           ctRes.ok ? ctRes.json() : Promise.resolve({columns:[],rows:[]}),
+          sRes.ok ? sRes.json() : Promise.resolve({columns:[],rows:[]}),
         ]);
 
         const mapRows=(cols,rows)=>rows.map(r=>Object.fromEntries(r.map((v,i)=>[cols[i],v])));
@@ -250,6 +271,7 @@ export default function Page(){
 
         setTeam(mapRows(tData.columns,tData.rows));
         setContacts(mapRows(ctData.columns,ctData.rows));
+        setScope(mapRows(sData.columns,sData.rows)); // NEW
       }catch(e){ setError(e.message); }
   })(); },[]);
 
@@ -295,6 +317,26 @@ export default function Page(){
       };
     }); return m;
   },[contacts]);
+
+  // Scope map (hover)
+  const scopeBySlug = useMemo(()=>{
+    const m={};
+    (scope||[]).forEach(r=>{
+      const slug=normalizeSlug(r.Slug);
+      if(!slug) return;
+      m[slug] = {
+        posts: r["Posts per Week"] ?? "",
+        blogs: r["Blogs per Month"] ?? "",
+        metaAds: r["Meta Ads"] ?? "",
+        googleAds: r["Google Ads"] ?? "",
+        videos: r["Videos per Month"] ?? "",
+        shorts: r["Shorts per Month"] ?? "",
+        images: r["Images per Month"] ?? "",
+        notes: r["Notes"] ?? "",
+      };
+    });
+    return m;
+  },[scope]);
 
   // Monthly data: slug -> year -> monthIndex -> { state }
   const currentYear=new Date().getFullYear();
@@ -449,6 +491,7 @@ export default function Page(){
               const nextStatus = nextEvent ? (nextEvent._statusByClient[slug] || nextEvent._statusDefault || "no content organised or needed") : null;
 
               const cc = contactsBySlug[slug];
+              const sc = scopeBySlug[slug];
 
               return (
                 <div key={idx} className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/85 dark:bg-zinc-900/70 p-5 shadow-sm hover:shadow-md transition">
@@ -480,10 +523,49 @@ export default function Page(){
                         </div>
                       </div>
                     </div>
-                    <span className="ml-auto px-2 py-1 rounded-full text-xs border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">{slug}</span>
+
+                    {/* right side chips: slug, scope, client quick info */}
+                    <div className="ml-auto flex items-center gap-2">
+                      <span className="px-2 py-1 rounded-full text-xs border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">{slug}</span>
+
+                      {sc && (
+                        <Chip label="ℹ️ Scope" variant="info">
+                          <div className="text-sm">
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                              <div className="text-zinc-500">Posts / wk</div><div className="text-right font-medium">{sc.posts||"—"}</div>
+                              <div className="text-zinc-500">Blogs / mo</div><div className="text-right font-medium">{sc.blogs||"—"}</div>
+                              <div className="text-zinc-500">Meta ads</div><div className="text-right font-medium">{sc.metaAds||"—"}</div>
+                              <div className="text-zinc-500">Google ads</div><div className="text-right font-medium">{sc.googleAds||"—"}</div>
+                              <div className="text-zinc-500">Videos / mo</div><div className="text-right font-medium">{sc.videos||"—"}</div>
+                              <div className="text-zinc-500">Shorts / mo</div><div className="text-right font-medium">{sc.shorts||"—"}</div>
+                              <div className="text-zinc-500">Images / mo</div><div className="text-right font-medium">{sc.images||"—"}</div>
+                            </div>
+                            {sc.notes ? <div className="mt-2 text-xs text-zinc-500">{sc.notes}</div> : null}
+                          </div>
+                        </Chip>
+                      )}
+
+                      <Chip label="👤 Client" variant="plain">
+                        <div className="text-sm">
+                          <div className="flex justify-between gap-4"><span className="text-zinc-500">Name</span><span className="font-medium">{c.Client||"—"}</span></div>
+                          <div className="flex justify-between gap-4"><span className="text-zinc-500">Slug</span><span className="font-medium">{slug}</span></div>
+                          <div className="mt-1 text-xs text-zinc-500">Lead/Assist below. Notes:</div>
+                          <div className="text-xs">{c["Comms Notes"] || "—"}</div>
+                          {cc?.primary || cc?.secondary ? (
+                            <div className="mt-2 text-xs">
+                              <div className="text-zinc-500 mb-1">Contacts</div>
+                              <div className="space-y-1">
+                                {cc?.primary && <div><span className="font-medium">Primary:</span> {cc.primary.Name} {cc.primary.Email? <a className="text-emerald-600 dark:text-emerald-400 hover:underline" href={`mailto:${cc.primary.Email}`}>({cc.primary.Email})</a> : null}</div>}
+                                {cc?.secondary && <div><span className="font-medium">Secondary:</span> {cc.secondary.Name} {cc.secondary.Email? <a className="text-emerald-600 dark:text-emerald-400 hover:underline" href={`mailto:${cc.secondary.Email}`}>({cc.secondary.Email})</a> : null}</div>}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      </Chip>
+                    </div>
                   </div>
 
-                  {/* client contacts */}
+                  {/* client contacts (external) */}
                   {(cc?.primary || cc?.secondary) && (
                     <div className="mt-3 text-xs">
                       <div className="text-zinc-500 mb-1">Client Contacts</div>
