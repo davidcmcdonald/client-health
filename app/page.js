@@ -17,6 +17,7 @@ function cn(...a){return a.filter(Boolean).join(" ");}
 function dateFromSheet(v){ if(!v) return null; const d = new Date(v); return Number.isNaN(d.getTime())?null:d; }
 function fmt(d){ return d ? d.toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"}) : "—"; }
 function normalizeSlug(s){ return String(s||"").trim().toUpperCase(); }
+function normalizeName(s){ return String(s||"").trim().toLowerCase(); }
 
 function monthsBetween(a,b){ if(!a||!b) return null;
   let m=(b.getFullYear()-a.getFullYear())*12+(b.getMonth()-a.getMonth());
@@ -52,20 +53,19 @@ function toMonthIndex(m){
   return null;
 }
 
-/* ----- Monthly single-state model (planned/done/sent) ----- */
+/* Monthly single-state (planned/done/sent) */
 function normalizeMonthState(s){
   const raw=String(s||"").trim().toLowerCase();
   if(["planned","plan","p"].includes(raw)) return "planned";
   if(["done","complete","completed","d"].includes(raw)) return "done";
   if(["sent","delivered","s"].includes(raw)) return "sent";
-  return null; // unknown or blank
+  return null;
 }
-/* Map month state to pill visual: planned→orange, done→yellow, sent→green, blank→grey */
 function pillFromMonthState(state){
-  if(state==="planned") return "planned";
-  if(state==="done")    return "done";
-  if(state==="sent")    return "sent";
-  return "no_plan";
+  if(state==="planned") return "planned";       // orange
+  if(state==="done")    return "done";          // yellow
+  if(state==="sent")    return "sent";          // green
+  return "no_plan";                             // grey
 }
 
 /* Status normalisation + per-client parsing (Events) */
@@ -84,6 +84,41 @@ function parseClientStatuses(cell){
   return map;
 }
 
+/* Split helpers */
+function splitNames(s){
+  if(!s) return [];
+  return String(s).split(/\/|,|&|\band\b|·|\+|\|/gi).map(x=>x.trim()).filter(Boolean);
+}
+function splitCodes(s){
+  if(!s) return [];
+  return String(s).split(/[,;\s]+/).map(x=>normalizeSlug(x)).filter(Boolean);
+}
+
+/* ---------------- Theme toggle (no deps) ---------------- */
+function useTheme(){
+  const [theme,setTheme]=useState("system");
+  const [mounted,setMounted]=useState(false);
+  useEffect(()=>{
+    setMounted(true);
+    const stored = typeof window!=="undefined" ? localStorage.getItem("theme") : null;
+    const initial = stored || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark":"light");
+    apply(initial);
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange=()=>{ const t = localStorage.getItem("theme") || "system";
+      if(t==="system") apply(mq.matches ? "dark":"light"); };
+    mq.addEventListener?.("change", onChange);
+    return ()=> mq.removeEventListener?.("change", onChange);
+  },[]);
+  function apply(t){
+    document.documentElement.classList.toggle("dark", t==="dark");
+    document.documentElement.style.colorScheme = t==="dark" ? "dark" : "light";
+    localStorage.setItem("theme", t);
+    setTheme(t);
+  }
+  function toggle(){ const next = document.documentElement.classList.contains("dark") ? "light" : "dark"; apply(next); }
+  return { theme, toggle, mounted };
+}
+
 /* ---------------- pretty UI atoms ---------------- */
 function Logo({ slug, file }){
   if(file){
@@ -94,10 +129,10 @@ function Logo({ slug, file }){
 }
 function MonthPill({label,status}){
   const styles={
-    sent:"bg-emerald-500 text-white",           // green
-    done:"bg-yellow-400 text-zinc-900",         // yellow
-    planned:"bg-orange-500 text-white",         // orange
-    no_plan:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300", // grey
+    sent:"bg-emerald-500 text-white",
+    done:"bg-yellow-400 text-zinc-900",
+    planned:"bg-orange-500 text-white",
+    no_plan:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
   }[status||"no_plan"];
   return <span className={cn("px-2.5 py-1 rounded-full text-xs font-medium",styles)}>{label}</span>;
 }
@@ -130,25 +165,61 @@ function CardSkeleton(){
   );
 }
 
+/* Generic hover badge (tooltip) */
+function PersonBadge({ name, person, prefix }){
+  return (
+    <span className="relative group inline-flex items-center gap-1 cursor-help underline decoration-dotted underline-offset-2">
+      {prefix && <span className="text-zinc-500">{prefix}:</span>}
+      <span>{name}</span>
+      {/* tooltip */}
+      <span className="pointer-events-none absolute left-0 top-[120%] z-20 hidden w-64 group-hover:block">
+        <span className="block rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 shadow-xl">
+          <div className="text-sm font-medium">{person?.Name || name}</div>
+          {person?.Role && <div className="text-xs text-zinc-500">{person.Role}</div>}
+          <div className="mt-2 space-y-1 text-sm">
+            {person?.Email ? (
+              <div><a className="text-emerald-600 dark:text-emerald-400 hover:underline" href={`mailto:${person.Email}`}>{person.Email}</a></div>
+            ) : <div className="text-zinc-500">No email</div>}
+            {person?.Phone ? (
+              <div><a className="text-emerald-600 dark:text-emerald-400 hover:underline" href={`tel:${person.Phone}`}>{person.Phone}</a></div>
+            ) : <div className="text-zinc-500">No phone</div>}
+            {person?.Notes && <div className="text-xs text-zinc-500">{person.Notes}</div>}
+          </div>
+        </span>
+      </span>
+    </span>
+  );
+}
+
 /* ---------------- page ---------------- */
 export default function Page(){
   const [clients,setClients]=useState(null);
   const [events,setEvents]=useState(null);
   const [monthly,setMonthly]=useState(null);
+  const [team,setTeam]=useState(null);        // NEW
+  const [contacts,setContacts]=useState(null);// NEW
   const [error,setError]=useState("");
   const [q,setQ]=useState("");
+  const { toggle, mounted } = useTheme();
 
   useEffect(()=>{ (async()=>{
       try{
-        const [cRes,eRes,mRes]=await Promise.all([
+        const [cRes,eRes,mRes,tRes,ctRes]=await Promise.all([
           fetch("/api/sheet?sheet=Clients",{cache:"no-store"}),
           fetch("/api/sheet?sheet=Events",{cache:"no-store"}),
           fetch("/api/sheet?sheet=Monthly",{cache:"no-store"}),
+          fetch("/api/sheet?sheet=Team",{cache:"no-store"}),      // NEW
+          fetch("/api/sheet?sheet=Contacts",{cache:"no-store"}), // NEW
         ]);
         if(!cRes.ok) throw new Error("Failed to load Clients");
         if(!eRes.ok) throw new Error("Failed to load Events");
         if(!mRes.ok) throw new Error("Failed to load Monthly");
-        const [cData,eData,mData]=await Promise.all([cRes.json(),eRes.json(),mRes.json()]);
+        // Team/Contacts are optional but recommended
+        const [cData,eData,mData,tData,ctData]=await Promise.all([
+          cRes.json(), eRes.json(), mRes.json(),
+          tRes.ok ? tRes.json() : Promise.resolve({columns:[],rows:[]}),
+          ctRes.ok ? ctRes.json() : Promise.resolve({columns:[],rows:[]}),
+        ]);
         const mapRows=(cols,rows)=>rows.map(r=>Object.fromEntries(r.map((v,i)=>[cols[i],v])));
 
         setClients(
@@ -158,24 +229,65 @@ export default function Page(){
         );
         setEvents(
           mapRows(eData.columns,eData.rows)
-          .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
-          .map(o=>{
-            const _date=dateFromSheet(o.Date);
-            const _slugs=String(o.Clients||"").split(/[,\s]+/).map(s=>normalizeSlug(s)).filter(Boolean);
-            const _statusDefault=normalizeStatus(o.Status);
-            const _statusByClient=parseClientStatuses(o["Client Statuses"]||"");
-            return {...o,_date,_slugs,_statusDefault,_statusByClient};
-          })
-          .filter(o=>o._date)
-          .sort((a,b)=>a._date-b._date)
+            .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
+            .map(o=>{
+              const _date=dateFromSheet(o.Date);
+              const _slugs=String(o.Clients||"").split(/[,\s]+/).map(s=>normalizeSlug(s)).filter(Boolean);
+              const _statusDefault=normalizeStatus(o.Status);
+              const _statusByClient=parseClientStatuses(o["Client Statuses"]||"");
+              return {...o,_date,_slugs,_statusDefault,_statusByClient};
+            })
+            .filter(o=>o._date)
+            .sort((a,b)=>a._date-b._date)
         );
         setMonthly(
-          mapRows(mData.columns,mData.rows).filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
+          mapRows(mData.columns,mData.rows)
+            .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
         );
+        setTeam(mapRows(tData.columns,tData.rows));
+        setContacts(mapRows(ctData.columns,ctData.rows));
       }catch(e){ setError(e.message); }
   })(); },[]);
 
-  const slugToName=useMemo(()=>{ const map={}; (clients||[]).forEach(c=>{ if(c.Slug) map[normalizeSlug(c.Slug)]=c.Client; }); return map; },[clients]);
+  // Team: build maps
+  const teamByName=useMemo(()=>{
+    const map={};
+    (team||[]).forEach(p=>{
+      const k=normalizeName(p.Name);
+      if(k) map[k]=p;
+      const first=k.split(/\s+/)[0];
+      if(first && !map[first]) map[first]=p;
+    });
+    return map;
+  },[team]);
+
+  const leadsBySlug = useMemo(()=>{
+    const out={}; (team||[]).forEach(t=>{
+      splitCodes(t.Leads).forEach(s=>{ (out[s] ||= []).push(t); });
+    }); return out;
+  },[team]);
+  const assistsBySlug = useMemo(()=>{
+    const out={}; (team||[]).forEach(t=>{
+      splitCodes(t.Assists).forEach(s=>{ (out[s] ||= []).push(t); });
+    }); return out;
+  },[team]);
+
+  // Contacts: slug -> {primary, secondary, notes}
+  const contactsBySlug = useMemo(()=>{
+    const m={}; (contacts||[]).forEach(r=>{
+      const slug=normalizeSlug(r.Slug);
+      if(!slug) return;
+      m[slug] = {
+        primary: r["Primary Name"] ? {
+          Name: r["Primary Name"], Email: r["Primary Email"], Phone: r["Primary Phone"], Role: "Primary", Notes: r.Notes || ""
+        } : null,
+        secondary: r["Secondary Name"] ? {
+          Name: r["Secondary Name"], Email: r["Secondary Email"], Phone: r["Secondary Phone"], Role: "Secondary", Notes: r.Notes || ""
+        } : null,
+        notes: r.Notes || ""
+      };
+    }); return m;
+  },[contacts]);
 
   // slug -> year -> monthIndex -> { state }
   const currentYear=new Date().getFullYear();
@@ -208,11 +320,12 @@ export default function Page(){
     return clients.filter(c =>
       String(c.Client||"").toLowerCase().includes(qq) ||
       String(c.Slug||"").toLowerCase().includes(qq) ||
-      String(c["Client Lead"]||"").toLowerCase().includes(qq)
+      String(c["Client Lead"]||"").toLowerCase().includes(qq) ||
+      String(c["Client Assist"]||"").toLowerCase().includes(qq)
     );
   },[clients,q]);
 
-  // top KPIs (LQR + comms freshness)
+  // top KPIs
   const kpis=useMemo(()=>{
     if(!clients) return null;
     let up=0, soon=0, due=0, commsFresh=0, commsStale=0;
@@ -247,15 +360,30 @@ export default function Page(){
               <div className="h-9 w-9 rounded-lg bg-zinc-900 text-white grid place-items-center shadow-sm">▦</div>
               <div>
                 <h1 className="text-2xl font-bold tracking-tight">Vito Media Client Health</h1>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">Live from Google Sheets — Clients • Monthly • Events</p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">Live from Google Sheets — Clients • Monthly • Events • Contacts</p>
               </div>
             </div>
-            <div className="w-full md:w-96 relative">
-              <input
-                value={q} onChange={e=>setQ(e.target.value)} placeholder="Search clients…"
-                className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-10 pr-3 py-2.5 shadow-sm outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400">🔎</span>
+
+            <div className="flex items-center gap-3">
+              <div className="w-40 md:w-72 relative">
+                <input
+                  value={q} onChange={e=>setQ(e.target.value)} placeholder="Search clients…"
+                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-3 py-2.5 shadow-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400">🔎</span>
+              </div>
+
+              {/* Theme toggle */}
+              {mounted && (
+                <button
+                  onClick={()=>toggle()}
+                  className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-sm shadow-sm hover:shadow"
+                  title="Toggle light/dark"
+                >
+                  <span className="hidden sm:inline">Theme</span>
+                  <span className="text-lg">🌓</span>
+                </button>
+              )}
             </div>
           </div>
         </header>
@@ -271,7 +399,7 @@ export default function Page(){
           </section>
         )}
 
-        {/* Legend (planned/done/sent + grey) */}
+        {/* Legend */}
         <section className="mt-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 p-4">
           <div className="text-xs font-medium mb-2 text-zinc-600 dark:text-zinc-300">Legend</div>
           <div className="flex flex-wrap gap-3 text-xs">
@@ -291,12 +419,21 @@ export default function Page(){
           <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map((c,idx)=>{
               const slug=normalizeSlug(c.Slug);
+
+              // Team (from Team sheet; fallback to Clients sheet names)
+              const teamLeads = leadsBySlug[slug] || [];
+              const teamAssists = assistsBySlug[slug] || [];
+              const fallbackLeads = !teamLeads.length ? splitNames(c["Client Lead"]).map(n => ({ Name:n })) : [];
+              const fallbackAssists = !teamAssists.length ? splitNames(c["Client Assist"]).map(n => ({ Name:n })) : [];
+
+              // LQR + comms
               const lqr=lqrStatus(dateFromSheet(c["Last Quarterly Review"]));
               const commsType=c["Last Comms Type"];
               const commsIcon=COMMS_ICON[commsType] || "🗒️";
               const commsDate=dateFromSheet(c["Last Comms Date"]);
               const commsPill=commsRecency(commsDate);
 
+              // months
               const monthsForYear=monthDataBySlug[slug]?.[currentYear] || {};
               const pills=MONTHS_SHORT.map((label,i)=>{
                 const rec=monthsForYear[i];
@@ -304,25 +441,56 @@ export default function Page(){
                 return {label, status: pillFromMonthState(state)};
               });
 
-              // next event (shared Events with per-client status)
+              // next event
               const nextEvent=(eventsBySlug[slug] || []).find(e=>e._date>=new Date());
               const nextStatus = nextEvent ? (nextEvent._statusByClient[slug] || nextEvent._statusDefault || "no content organised or needed") : null;
 
+              // client contacts
+              const cc = contactsBySlug[slug];
+
               return (
                 <div key={idx} className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/85 dark:bg-zinc-900/70 p-5 shadow-sm hover:shadow-md transition">
-                  {/* top */}
+                  {/* top: logo + name + slug */}
                   <div className="flex items-center gap-4">
                     <Logo slug={slug} file={c.LogoFile}/>
                     <div className="min-w-0">
                       <div className="text-lg font-semibold truncate">{c.Client || "—"}</div>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                        <span className="text-zinc-500">Lead: <span className="font-medium text-zinc-800 dark:text-zinc-200">{c["Client Lead"] || "-"}</span></span>
-                        <span className="text-zinc-500">· Assist: <span className="font-medium text-zinc-800 dark:text-zinc-200">{c["Client Assist"] || "-"}</span></span>
-                        <span className={cn("ml-1 rounded-full px-2 py-0.5 text-xs font-medium", lqr.cls)}>{lqr.label}</span>
+
+                      {/* Team (hoverable) */}
+                      <div className="mt-1 flex flex-col gap-1 text-xs">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-zinc-500">Lead:</span>
+                          <span className="flex gap-2 flex-wrap">
+                            { (teamLeads.length ? teamLeads : fallbackLeads).map((p,i)=>(
+                              <PersonBadge key={i} name={p.Name} person={teamByName[normalizeName(p.Name)] || p} />
+                            )) }
+                            {(!teamLeads.length && !fallbackLeads.length) && <span>-</span>}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-zinc-500">Assist:</span>
+                          <span className="flex gap-2 flex-wrap">
+                            { (teamAssists.length ? teamAssists : fallbackAssists).map((p,i)=>(
+                              <PersonBadge key={i} name={p.Name} person={teamByName[normalizeName(p.Name)] || p} />
+                            )) }
+                            {(!teamAssists.length && !fallbackAssists.length) && <span>-</span>}
+                          </span>
+                        </div>
                       </div>
                     </div>
                     <span className="ml-auto px-2 py-1 rounded-full text-xs border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">{slug}</span>
                   </div>
+
+                  {/* client contacts (external) */}
+                  {(cc?.primary || cc?.secondary) && (
+                    <div className="mt-3 text-xs">
+                      <div className="text-zinc-500 mb-1">Client Contacts</div>
+                      <div className="flex gap-3 flex-wrap">
+                        {cc.primary && <PersonBadge name={cc.primary.Name} person={cc.primary} prefix="Primary" />}
+                        {cc.secondary && <PersonBadge name={cc.secondary.Name} person={cc.secondary} prefix="Secondary" />}
+                      </div>
+                    </div>
+                  )}
 
                   {/* comms */}
                   <div className="mt-4 flex items-center gap-2 text-sm flex-wrap">
@@ -332,6 +500,7 @@ export default function Page(){
                       <span>{commsType || "—"}</span>
                       <span className="text-zinc-500">· {c["Last Comms Date"] || "—"}</span>
                       <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", commsPill.cls)}>{commsPill.label}</span>
+                      <span className={cn("ml-auto rounded-full px-2 py-0.5 text-xs font-medium", lqr.cls)}>{lqr.label}</span>
                     </div>
                   </div>
 
@@ -396,11 +565,10 @@ export default function Page(){
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-1">
                           {ev._slugs.map((s,idx)=>{
-                            const label=slugToName[s] || s;
                             const st=ev._statusByClient[s] || ev._statusDefault || "no content organised or needed";
                             return (
                               <span key={idx} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-zinc-200 dark:border-zinc-800 text-xs bg-white dark:bg-zinc-950">
-                                {label} <StatusChip status={st}/>
+                                {s} <StatusChip status={st}/>
                               </span>
                             );
                           })}
