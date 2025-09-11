@@ -34,11 +34,12 @@ function lqrStatus(date){
   return {label:`LQR ${fmt(date)}`, cls:"bg-rose-500 text-white"};
 }
 
-/* Last comms pill: green ≤7d, red >7d, grey missing */
-function commsRecency(date){
+/* Last comms pill: green ≤7d, red >7d, grey missing. Label: “Last Comms 3d” */
+function commsRecency(date, type){
   const d=daysSince(date);
-  if(d==null) return {label:"—", cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300"};
-  return d<=7 ? {label:`${d}d`, cls:"bg-emerald-500 text-white"} : {label:`${d}d`, cls:"bg-rose-500 text-white"};
+  if(d==null) return {label:`${COMMS_ICON[type]||"🗒️"} Last Comms —`, cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300"};
+  const base = `${COMMS_ICON[type]||"🗒️"} Last Comms ${d}d`;
+  return d<=7 ? {label:base, cls:"bg-emerald-500 text-white"} : {label:base, cls:"bg-rose-500 text-white"};
 }
 
 /* Monthly helpers */
@@ -52,8 +53,6 @@ function toMonthIndex(m){
   const n=Number(s); if(!Number.isNaN(n)) return Math.max(1,Math.min(12,n))-1;
   return null;
 }
-
-/* Monthly single-state (planned/done/sent) */
 function normalizeMonthState(s){
   const raw=String(s||"").trim().toLowerCase();
   if(["planned","plan","p"].includes(raw)) return "planned";
@@ -61,14 +60,23 @@ function normalizeMonthState(s){
   if(["sent","delivered","s"].includes(raw)) return "sent";
   return null;
 }
-function pillFromMonthState(state){
-  if(state==="planned") return "planned";       // orange
-  if(state==="done")    return "done";          // yellow
-  if(state==="sent")    return "sent";          // green
-  return "no_plan";                             // grey
+
+/* Legend mapping & pill color:
+   Green = sent
+   Red   = month is >30 days past and not sent
+   Yellow= “incomplete” (planned/done but not sent, and not overdue)
+   Grey  = others */
+function monthPillColor(state, monthIndex, year){
+  const now = new Date();
+  const monthEnd = new Date(year, monthIndex+1, 0, 23, 59, 59);
+  const overdue = (now.getTime() - monthEnd.getTime()) >= (30*24*3600*1000);
+  if(state==="sent") return "green";
+  if(overdue && state!=="sent") return "red";
+  if(state==="planned" || state==="done") return "yellow";
+  return "grey";
 }
 
-/* Status normalisation + per-client parsing (Events) */
+/* Status normalization + per-client parsing (Events sheet) */
 function normalizeStatus(s){
   const raw=String(s||"").toLowerCase().replace(/\s+/g," ").trim();
   return STATUS_LABELS.find(x=>x===raw) || null;
@@ -89,51 +97,62 @@ function splitNames(s){
   if(!s) return [];
   return String(s).split(/\/|,|&|\band\b|·|\+|\|/gi).map(x=>x.trim()).filter(Boolean);
 }
-function splitCodes(s){
-  if(!s) return [];
-  return String(s).split(/[,;\s]+/).map(x=>normalizeSlug(x)).filter(Boolean);
-}
 
-/* ---------------- Theme toggle (no deps) ---------------- */
+/* ---------------- Theme toggle (iPhone/desktop safe) ---------------- */
 function useTheme(){
-  const [theme,setTheme]=useState("system");
-  const [mounted,setMounted]=useState(false);
-  useEffect(()=>{
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
     setMounted(true);
-    const stored = typeof window!=="undefined" ? localStorage.getItem("theme") : null;
-    const initial = stored || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark":"light");
-    apply(initial);
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange=()=>{ const t = localStorage.getItem("theme") || "system";
-      if(t==="system") apply(mq.matches ? "dark":"light"); };
-    mq.addEventListener?.("change", onChange);
-    return ()=> mq.removeEventListener?.("change", onChange);
-  },[]);
-  function apply(t){
-    document.documentElement.classList.toggle("dark", t==="dark");
-    document.documentElement.style.colorScheme = t==="dark" ? "dark" : "light";
-    localStorage.setItem("theme", t);
-    setTheme(t);
+    // Initial from <html data-theme>, cookie, or OS
+    const doc = document.documentElement;
+    let current = doc.getAttribute("data-theme");
+    if (!current) {
+      const m = document.cookie.match(/(?:^|;)\s*theme=(light|dark)\b/);
+      current = m ? m[1] : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    }
+    apply(current);
+
+    function onChange(e){
+      try {
+        const saved = localStorage.getItem("theme");
+        if (!saved || saved === "system") apply(e.matches ? "dark" : "light");
+      } catch(_) {}
+    }
+    const mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    if (mq) {
+      if (mq.addEventListener) mq.addEventListener("change", onChange);
+      else if (mq.addListener) mq.addListener(onChange);
+    }
+    return () => {
+      if (mq) {
+        if (mq.removeEventListener) mq.removeEventListener("change", onChange);
+        else if (mq.removeListener) mq.removeListener(onChange);
+      }
+    };
+  }, []);
+
+  function apply(theme){
+    const doc = document.documentElement;
+    if (theme === "dark") doc.classList.add("dark"); else doc.classList.remove("dark");
+    doc.setAttribute("data-theme", theme);
+    doc.style.colorScheme = (theme === "dark") ? "dark" : "light";
+    try { localStorage.setItem("theme", theme); } catch(_) {}
+    document.cookie = "theme=" + theme + "; path=/; max-age=31536000";
   }
-  function toggle(){ const next = document.documentElement.classList.contains("dark") ? "light" : "dark"; apply(next); }
-  return { theme, toggle, mounted };
+  function toggle(){ apply(document.documentElement.classList.contains("dark") ? "light" : "dark"); }
+
+  return { mounted, toggle };
 }
 
-/* ---------------- pretty UI atoms ---------------- */
-function Logo({ slug, file }){
-  if(file){
-    return <img src={`/logos/${file}`} alt={slug||"logo"} className="h-14 w-14 rounded-xl object-contain bg-white ring-1 ring-zinc-200 dark:ring-zinc-800"/>;
-  }
-  const initials=(slug||"??").slice(0,3).toUpperCase();
-  return <div className="h-14 w-14 rounded-xl grid place-items-center bg-zinc-900 text-white font-semibold">{initials}</div>;
-}
-function MonthPill({label,status}){
+/* ---------------- UI atoms ---------------- */
+function MonthPill({label,color}){
   const styles={
-    sent:"bg-emerald-500 text-white",
-    done:"bg-yellow-400 text-zinc-900",
-    planned:"bg-orange-500 text-white",
-    no_plan:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
-  }[status||"no_plan"];
+    green:"bg-emerald-500 text-white",
+    yellow:"bg-yellow-400 text-zinc-900",
+    red:"bg-rose-500 text-white",
+    grey:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
+  }[color||"grey"];
   return <span className={cn("px-2.5 py-1 rounded-full text-xs font-medium",styles)}>{label}</span>;
 }
 function StatusChip({status}){
@@ -145,46 +164,18 @@ function StatusChip({status}){
   const s=map[normalizeStatus(status)||""]||{cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",label:"—"};
   return <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium",s.cls)}>{s.label}</span>;
 }
-function StatCard({kpi,label,sub}){
+function Tooltip({children,content,width="w-80"}){
   return (
-    <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 p-4 shadow-sm">
-      <div className="text-2xl font-bold">{kpi}</div>
-      <div className="text-sm text-zinc-600 dark:text-zinc-300">{label}</div>
-      {sub && <div className="text-xs mt-1 text-zinc-500">{sub}</div>}
-    </div>
-  );
-}
-function CardSkeleton(){
-  return (
-    <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/50 dark:bg-zinc-900/40 p-5 shadow-sm animate-pulse">
-      <div className="h-14 w-14 rounded-xl bg-zinc-200 dark:bg-zinc-800 mb-4"/>
-      <div className="h-4 w-1/2 bg-zinc-200 dark:bg-zinc-800 mb-2"/>
-      <div className="h-3 w-2/3 bg-zinc-200 dark:bg-zinc-800 mb-4"/>
-      <div className="h-3 w-1/3 bg-zinc-200 dark:bg-zinc-800"/>
-    </div>
-  );
-}
-
-/* Small generic tooltip chip */
-function Chip({label,children,variant="plain"}){
-  const base="relative group inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border";
-  const styles={
-    plain: "border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950",
-    info:  "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900",
-  }[variant];
-  return (
-    <span className={cn(base,styles)}>
-      {label}
-      <span className="pointer-events-none absolute left-0 top-[120%] z-30 hidden w-72 group-hover:block">
+    <span className="relative group inline-block">
+      {children}
+      <span className={cn("pointer-events-none absolute left-0 top-[120%] z-30 hidden", width, "group-hover:block")}>
         <span className="block rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 shadow-xl">
-          {children}
+          {content}
         </span>
       </span>
     </span>
   );
 }
-
-/* Generic hover badge (person) */
 function PersonBadge({ name, person, prefix }){
   return (
     <span className="relative group inline-flex items-center gap-1 cursor-help underline decoration-dotted underline-offset-2">
@@ -216,10 +207,11 @@ export default function Page(){
   const [monthly,setMonthly]=useState(null);
   const [team,setTeam]=useState(null);
   const [contacts,setContacts]=useState(null);
-  const [scope,setScope]=useState(null);     // NEW: scope for hover
+  const [scope,setScope]=useState(null);
   const [error,setError]=useState("");
   const [q,setQ]=useState("");
-  const { toggle, mounted } = useTheme();
+  const { mounted, toggle } = useTheme();
+  const SHEET_URL = process.env.NEXT_PUBLIC_SHEET_URL; // set this in Vercel/ .env.local
 
   useEffect(()=>{ (async()=>{
       try{
@@ -229,7 +221,7 @@ export default function Page(){
           fetch("/api/sheet?sheet=Monthly",{cache:"no-store"}),
           fetch("/api/sheet?sheet=Team",{cache:"no-store"}),
           fetch("/api/sheet?sheet=Contacts",{cache:"no-store"}),
-          fetch("/api/sheet?sheet=Scope",{cache:"no-store"}), // NEW
+          fetch("/api/sheet?sheet=Scope",{cache:"no-store"}),
         ]);
         if(!cRes.ok) throw new Error("Failed to load Clients");
         if(!eRes.ok) throw new Error("Failed to load Events");
@@ -241,7 +233,6 @@ export default function Page(){
           ctRes.ok ? ctRes.json() : Promise.resolve({columns:[],rows:[]}),
           sRes.ok ? sRes.json() : Promise.resolve({columns:[],rows:[]}),
         ]);
-
         const mapRows=(cols,rows)=>rows.map(r=>Object.fromEntries(r.map((v,i)=>[cols[i],v])));
 
         setClients(
@@ -264,14 +255,13 @@ export default function Page(){
             .sort((a,b)=>a._date-b._date)
         );
 
-        setMonthly(
-          mapRows(mData.columns,mData.rows)
-            .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
+        setMonthly(mapRows(mData.columns,mData.rows)
+          .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
         );
 
         setTeam(mapRows(tData.columns,tData.rows));
         setContacts(mapRows(ctData.columns,ctData.rows));
-        setScope(mapRows(sData.columns,sData.rows)); // NEW
+        setScope(mapRows(sData.columns,sData.rows));
       }catch(e){ setError(e.message); }
   })(); },[]);
 
@@ -288,14 +278,14 @@ export default function Page(){
   },[team]);
   const leadsBySlug = useMemo(()=>{
     const out={}; (team||[]).forEach(t=>{
-      (String(t.Leads||"")).split(/[,;\s]+/).forEach(s=>{
+      String(t.Leads||"").split(/[,;\s]+/).forEach(s=>{
         const slug=normalizeSlug(s); if(slug) (out[slug] ||= []).push(t);
       });
     }); return out;
   },[team]);
   const assistsBySlug = useMemo(()=>{
     const out={}; (team||[]).forEach(t=>{
-      (String(t.Assists||"")).split(/[,;\s]+/).forEach(s=>{
+      String(t.Assists||"").split(/[,;\s]+/).forEach(s=>{
         const slug=normalizeSlug(s); if(slug) (out[slug] ||= []).push(t);
       });
     }); return out;
@@ -318,7 +308,7 @@ export default function Page(){
     }); return m;
   },[contacts]);
 
-  // Scope map (hover)
+  // Scope map
   const scopeBySlug = useMemo(()=>{
     const m={};
     (scope||[]).forEach(r=>{
@@ -338,7 +328,7 @@ export default function Page(){
     return m;
   },[scope]);
 
-  // Monthly data: slug -> year -> monthIndex -> { state }
+  // Monthly: slug -> year -> monthIndex -> { state }
   const currentYear=new Date().getFullYear();
   const monthDataBySlug=useMemo(()=>{
     const out={}; if(!monthly) return out;
@@ -374,17 +364,21 @@ export default function Page(){
     );
   },[clients,q]);
 
-  // KPIs
-  const kpis=useMemo(()=>{
+  // KPI chips (only show if count > 0) + hover lists
+  const kpiData=useMemo(()=>{
     if(!clients) return null;
-    let up=0, soon=0, due=0, commsFresh=0, commsStale=0;
+    const dueSoon=[], overdue=[], comms7=[];
     for(const c of clients){
-      const lqr=lqrStatus(dateFromSheet(c["Last Quarterly Review"]));
-      if(lqr.cls.includes("bg-emerald")) up++; else if(lqr.cls.includes("bg-orange")) soon++; else if(lqr.cls.includes("bg-rose")) due++;
-      const rec=commsRecency(dateFromSheet(c["Last Comms Date"]));
-      if(rec.cls.includes("bg-emerald")) commsFresh++; else if(rec.cls.includes("bg-rose")) commsStale++;
+      const name = c.Client || c.Slug || "—";
+      const lastLQR = dateFromSheet(c["Last Quarterly Review"]);
+      const m = monthsBetween(lastLQR, new Date());
+      if(m===4) dueSoon.push(name);
+      else if(m>=5) overdue.push(name);
+
+      const d = daysSince(dateFromSheet(c["Last Comms Date"]));
+      if(d!=null && d>7) comms7.push(name);
     }
-    return {up,soon,due,commsFresh,commsStale,total:clients.length};
+    return { dueSoon, overdue, comms7 };
   },[clients]);
 
   if(error){
@@ -424,7 +418,7 @@ export default function Page(){
 
               {mounted && (
                 <button
-                  onClick={()=>toggle()}
+                  onClick={toggle}
                   className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-sm shadow-sm hover:shadow"
                   title="Toggle light/dark"
                 >
@@ -436,187 +430,199 @@ export default function Page(){
           </div>
         </header>
 
-        {/* KPI row */}
-        {kpis && (
-          <section className="mt-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <StatCard kpi={kpis.up}   label="LQR up-to-date" />
-            <StatCard kpi={kpis.soon} label="LQR due soon" />
-            <StatCard kpi={kpis.due}  label="LQR overdue" />
-            <StatCard kpi={kpis.commsFresh} label="Comms ≤7d" />
-            <StatCard kpi={kpis.commsStale} label="Comms >7d" sub={`${kpis.total} total clients`} />
+        {/* KPI row — only show relevant, with hover list */}
+        {kpiData && (
+          <section className="mt-6 flex flex-wrap gap-3">
+            {kpiData.dueSoon.length>0 && (
+              <Tooltip
+                content={<ul className="text-sm list-disc pl-5">{kpiData.dueSoon.map((n,i)=><li key={i}>{n}</li>)}</ul>}
+              >
+                <span className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 px-3 py-2 text-sm shadow-sm">
+                  <span className="font-semibold">{kpiData.dueSoon.length}</span> LQR Due Soon
+                </span>
+              </Tooltip>
+            )}
+            {kpiData.overdue.length>0 && (
+              <Tooltip
+                content={<ul className="text-sm list-disc pl-5">{kpiData.overdue.map((n,i)=><li key={i}>{n}</li>)}</ul>}
+              >
+                <span className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 px-3 py-2 text-sm shadow-sm">
+                  <span className="font-semibold">{kpiData.overdue.length}</span> LQR Overdue
+                </span>
+              </Tooltip>
+            )}
+            {kpiData.comms7.length>0 && (
+              <Tooltip
+                content={<ul className="text-sm list-disc pl-5">{kpiData.comms7.map((n,i)=><li key={i}>{n}</li>)}</ul>}
+              >
+                <span className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 px-3 py-2 text-sm shadow-sm">
+                  <span className="font-semibold">{kpiData.comms7.length}</span> Comms &gt; 7 Days
+                </span>
+              </Tooltip>
+            )}
           </section>
         )}
 
-        {/* Legend */}
+        {/* Legend — sent/green, incomplete/yellow, overdue/red, other/grey */}
         <section className="mt-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 p-4">
           <div className="text-xs font-medium mb-2 text-zinc-600 dark:text-zinc-300">Legend</div>
           <div className="flex flex-wrap gap-3 text-xs">
             <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-emerald-500"></span>Sent</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-yellow-400"></span>Done</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-orange-500"></span>Planned</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>No plan</span>
+            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-yellow-400"></span>Incomplete</span>
+            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-rose-500"></span>Overdue (&gt;30d past, not Sent)</span>
+            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>Other</span>
           </div>
         </section>
 
         {/* Clients grid */}
         {!filtered ? (
           <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {Array.from({length:6}).map((_,i)=><CardSkeleton key={i}/>)}
+            {Array.from({length:6}).map((_,i)=><div key={i} className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/50 dark:bg-zinc-900/40 p-5 shadow-sm animate-pulse">
+              <div className="h-14 w-14 rounded-xl bg-zinc-200 dark:bg-zinc-800 mb-4"/>
+              <div className="h-4 w-1/2 bg-zinc-200 dark:bg-zinc-800 mb-2"/>
+              <div className="h-3 w-2/3 bg-zinc-200 dark:bg-zinc-800 mb-4"/>
+              <div className="h-3 w-1/3 bg-zinc-200 dark:bg-zinc-800"/>
+            </div>)}
           </div>
         ) : (
           <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map((c,idx)=>{
               const slug=normalizeSlug(c.Slug);
+              const website = c.Link || c.Website || null;
 
               // Team (sheet) with fallback to Clients names
-              const teamLeads = leadsBySlug[slug] || [];
-              const teamAssists = assistsBySlug[slug] || [];
+              const teamLeads = (leadsBySlug[slug] || []);
+              const teamAssists = (assistsBySlug[slug] || []);
               const fallbackLeads = !teamLeads.length ? splitNames(c["Client Lead"]).map(n => ({ Name:n })) : [];
               const fallbackAssists = !teamAssists.length ? splitNames(c["Client Assist"]).map(n => ({ Name:n })) : [];
 
-              const lqr=lqrStatus(dateFromSheet(c["Last Quarterly Review"]));
+              const lastLQR=lqrStatus(dateFromSheet(c["Last Quarterly Review"]));
               const commsType=c["Last Comms Type"];
-              const commsIcon=COMMS_ICON[commsType] || "🗒️";
               const commsDate=dateFromSheet(c["Last Comms Date"]);
-              const commsPill=commsRecency(commsDate);
+              const commsPill=commsRecency(commsDate, commsType);
 
               const monthsForYear=monthDataBySlug[slug]?.[currentYear] || {};
-              const pills=MONTHS_SHORT.map((label,i)=>{
-                const rec=monthsForYear[i];
-                const state=rec?.state || null;
-                return {label, status: pillFromMonthState(state)};
+              const monthPills=MONTHS_SHORT.map((label,i)=>{
+                const state = monthsForYear[i]?.state || null;
+                const color = monthPillColor(state, i, currentYear);
+                return {label,color};
               });
 
-              const nextEvent=(eventsBySlug[slug] || []).find(e=>e._date>=new Date());
-              const nextStatus = nextEvent ? (nextEvent._statusByClient[slug] || nextEvent._statusDefault || "no content organised or needed") : null;
+              // Up to 3 upcoming items
+              const upcoming=(eventsBySlug[slug] || []).filter(e=>e._date>=new Date()).slice(0,3);
 
               const cc = contactsBySlug[slug];
               const sc = scopeBySlug[slug];
+
+              // Hover content merged (Scope + Client) on Logo
+              const hoverContent = (
+                <div className="text-sm space-y-2">
+                  <div className="font-medium">{c.Client || slug}</div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                    <div className="text-zinc-500">Posts / wk</div><div className="text-right font-medium">{sc?.posts||"—"}</div>
+                    <div className="text-zinc-500">Blogs / mo</div><div className="text-right font-medium">{sc?.blogs||"—"}</div>
+                    <div className="text-zinc-500">Meta ads</div><div className="text-right font-medium">{sc?.metaAds||"—"}</div>
+                    <div className="text-zinc-500">Google ads</div><div className="text-right font-medium">{sc?.googleAds||"—"}</div>
+                    <div className="text-zinc-500">Videos / mo</div><div className="text-right font-medium">{sc?.videos||"—"}</div>
+                    <div className="text-zinc-500">Shorts / mo</div><div className="text-right font-medium">{sc?.shorts||"—"}</div>
+                    <div className="text-zinc-500">Images / mo</div><div className="text-right font-medium">{sc?.images||"—"}</div>
+                  </div>
+                  {(sc?.notes || c["Comms Notes"]) && (
+                    <div className="text-xs text-zinc-500">{sc?.notes || c["Comms Notes"]}</div>
+                  )}
+                  {(cc?.primary || cc?.secondary) && (
+                    <div className="text-xs">
+                      <div className="text-zinc-500 mb-1">Contacts</div>
+                      <div className="space-y-1">
+                        {cc?.primary && <div><span className="font-medium">Primary:</span> {cc.primary.Name} {cc.primary.Email? <a className="text-emerald-600 dark:text-emerald-400 hover:underline" href={`mailto:${cc.primary.Email}`}>({cc.primary.Email})</a> : null}</div>}
+                        {cc?.secondary && <div><span className="font-medium">Secondary:</span> {cc.secondary.Name} {cc.secondary.Email? <a className="text-emerald-600 dark:text-emerald-400 hover:underline" href={`mailto:${cc.secondary.Email}`}>({cc.secondary.Email})</a> : null}</div>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
 
               return (
                 <div key={idx} className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/85 dark:bg-zinc-900/70 p-5 shadow-sm hover:shadow-md transition">
                   {/* top */}
                   <div className="flex items-center gap-4">
-                    <Logo slug={slug} file={c.LogoFile}/>
+                    <Tooltip content={hoverContent}>
+                      <span className="inline-block">
+                        {c.LogoFile ? (
+                          <img src={`/logos/${c.LogoFile}`} alt={slug||"logo"} className="h-14 w-14 rounded-xl object-contain bg-white ring-1 ring-zinc-200 dark:ring-zinc-800"/>
+                        ) : (
+                          <div className="h-14 w-14 rounded-xl grid place-items-center bg-zinc-900 text-white font-semibold">
+                            {(slug||"??").slice(0,3)}
+                          </div>
+                        )}
+                      </span>
+                    </Tooltip>
+
                     <div className="min-w-0">
-                      <div className="text-lg font-semibold truncate">{c.Client || "—"}</div>
+                      <div className="text-lg font-semibold truncate">
+                        {website ? (
+                          <a href={website} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                            {c.Client || "—"}
+                          </a>
+                        ) : (c.Client || "—")}
+                      </div>
 
                       {/* Team hover chips */}
                       <div className="mt-1 flex flex-col gap-1 text-xs">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-zinc-500">Lead:</span>
                           <span className="flex gap-2 flex-wrap">
-                            { (teamLeads.length ? teamLeads : fallbackLeads).map((p,i)=>(
+                            {( (leadsBySlug[slug]||[]).length ? leadsBySlug[slug] : splitNames(c["Client Lead"]).map(n=>({Name:n})) ).map((p,i)=>(
                               <PersonBadge key={i} name={p.Name} person={teamByName[normalizeName(p.Name)] || p} />
-                            )) }
-                            {(!teamLeads.length && !fallbackLeads.length) && <span>-</span>}
+                            ))}
                           </span>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-zinc-500">Assist:</span>
                           <span className="flex gap-2 flex-wrap">
-                            { (teamAssists.length ? teamAssists : fallbackAssists).map((p,i)=>(
+                            {( (assistsBySlug[slug]||[]).length ? assistsBySlug[slug] : splitNames(c["Client Assist"]).map(n=>({Name:n})) ).map((p,i)=>(
                               <PersonBadge key={i} name={p.Name} person={teamByName[normalizeName(p.Name)] || p} />
-                            )) }
-                            {(!teamAssists.length && !fallbackAssists.length) && <span>-</span>}
+                            ))}
                           </span>
                         </div>
                       </div>
                     </div>
-
-                    {/* right side chips: slug, scope, client quick info */}
-                    <div className="ml-auto flex items-center gap-2">
-                      <span className="px-2 py-1 rounded-full text-xs border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">{slug}</span>
-
-                      {sc && (
-                        <Chip label="ℹ️ Scope" variant="info">
-                          <div className="text-sm">
-                            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                              <div className="text-zinc-500">Posts / wk</div><div className="text-right font-medium">{sc.posts||"—"}</div>
-                              <div className="text-zinc-500">Blogs / mo</div><div className="text-right font-medium">{sc.blogs||"—"}</div>
-                              <div className="text-zinc-500">Meta ads</div><div className="text-right font-medium">{sc.metaAds||"—"}</div>
-                              <div className="text-zinc-500">Google ads</div><div className="text-right font-medium">{sc.googleAds||"—"}</div>
-                              <div className="text-zinc-500">Videos / mo</div><div className="text-right font-medium">{sc.videos||"—"}</div>
-                              <div className="text-zinc-500">Shorts / mo</div><div className="text-right font-medium">{sc.shorts||"—"}</div>
-                              <div className="text-zinc-500">Images / mo</div><div className="text-right font-medium">{sc.images||"—"}</div>
-                            </div>
-                            {sc.notes ? <div className="mt-2 text-xs text-zinc-500">{sc.notes}</div> : null}
-                          </div>
-                        </Chip>
-                      )}
-
-                      <Chip label="👤 Client" variant="plain">
-                        <div className="text-sm">
-                          <div className="flex justify-between gap-4"><span className="text-zinc-500">Name</span><span className="font-medium">{c.Client||"—"}</span></div>
-                          <div className="flex justify-between gap-4"><span className="text-zinc-500">Slug</span><span className="font-medium">{slug}</span></div>
-                          <div className="mt-1 text-xs text-zinc-500">Lead/Assist below. Notes:</div>
-                          <div className="text-xs">{c["Comms Notes"] || "—"}</div>
-                          {cc?.primary || cc?.secondary ? (
-                            <div className="mt-2 text-xs">
-                              <div className="text-zinc-500 mb-1">Contacts</div>
-                              <div className="space-y-1">
-                                {cc?.primary && <div><span className="font-medium">Primary:</span> {cc.primary.Name} {cc.primary.Email? <a className="text-emerald-600 dark:text-emerald-400 hover:underline" href={`mailto:${cc.primary.Email}`}>({cc.primary.Email})</a> : null}</div>}
-                                {cc?.secondary && <div><span className="font-medium">Secondary:</span> {cc.secondary.Name} {cc.secondary.Email? <a className="text-emerald-600 dark:text-emerald-400 hover:underline" href={`mailto:${cc.secondary.Email}`}>({cc.secondary.Email})</a> : null}</div>}
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      </Chip>
-                    </div>
                   </div>
 
-                  {/* client contacts (external) */}
-                  {(cc?.primary || cc?.secondary) && (
-                    <div className="mt-3 text-xs">
-                      <div className="text-zinc-500 mb-1">Client Contacts</div>
-                      <div className="flex gap-3 flex-wrap">
-                        {cc.primary && <PersonBadge name={cc.primary.Name} person={cc.primary} prefix="Primary" />}
-                        {cc.secondary && <PersonBadge name={cc.secondary.Name} person={cc.secondary} prefix="Secondary" />}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* comms */}
+                  {/* comms + LQR (no raw date; only the colored “Last Comms 3d” pill + LQR pill) */}
                   <div className="mt-4 flex items-center gap-2 text-sm flex-wrap">
-                    <div className="text-zinc-500">Last comms</div>
-                    <div className="font-medium flex items-center gap-2">
-                      <span className="mr-1">{commsIcon}</span>
-                      <span>{commsType || "—"}</span>
-                      <span className="text-zinc-500">· {c["Last Comms Date"] || "—"}</span>
-                      <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", commsPill.cls)}>{commsPill.label}</span>
-                      <span className={cn("ml-auto rounded-full px-2 py-0.5 text-xs font-medium", lqr.cls)}>{lqr.label}</span>
-                    </div>
+                    <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", commsPill.cls)}>{commsPill.label}</span>
+                    <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", lastLQR.cls)}>{lastLQR.label}</span>
                   </div>
 
                   {/* months */}
                   <div className="mt-4">
                     <div className="text-xs uppercase tracking-wide text-zinc-500 mb-2">This year</div>
                     <div className="grid grid-cols-6 gap-2">
-                      {pills.map((p,i)=><MonthPill key={i} label={p.label} status={p.status}/>)}
+                      {monthPills.map((p,i)=><MonthPill key={i} label={p.label} color={p.color}/>)}
                     </div>
                   </div>
 
-                  {/* notes */}
-                  {c["Comms Notes"] && (
-                    <div className="mt-3 text-sm text-zinc-600 dark:text-zinc-300 line-clamp-2">{c["Comms Notes"]}</div>
-                  )}
-
-                  {/* next event */}
+                  {/* Next (show up to 3) */}
                   <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
-                    <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Next Event</div>
-                    {nextEvent ? (
-                      <div className="flex items-center justify-between text-sm">
-                        <div className="min-w-0">
-                          <div className="font-medium truncate">{nextEvent.Event}</div>
-                          <div className="text-zinc-500 truncate">{nextEvent.Notes || ""}</div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-zinc-500">{fmt(nextEvent._date)}</div>
-                          <div className="mt-1"><StatusChip status={nextStatus}/></div>
-                        </div>
+                    <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Next</div>
+                    {upcoming.length ? (
+                      <div className="space-y-1">
+                        {upcoming.map((ev,i)=>(
+                          <div key={i} className="flex items-center justify-between text-sm">
+                            <div className="min-w-0">
+                              <div className="font-medium truncate">{ev.Event}</div>
+                              <div className="text-zinc-500 truncate">{ev.Notes || ""}</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-zinc-500">{fmt(ev._date)}</div>
+                              <div className="mt-1"><StatusChip status={ev._statusByClient[slug] || ev._statusDefault || "no content organised or needed"}/></div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     ) : (
-                      <div className="text-sm text-zinc-500">No upcoming events</div>
+                      <div className="text-sm text-zinc-500">No upcoming items</div>
                     )}
                   </div>
                 </div>
@@ -627,16 +633,16 @@ export default function Page(){
 
         {/* Events table */}
         <section className="mt-10">
-          <h2 className="text-xl font-semibold mb-3">Major Upcoming Events</h2>
+          <h2 className="text-xl font-semibold mb-3">Major Upcoming Events, Holidays or Campaigns</h2>
           {!events ? (
-            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/60 p-6 shadow-sm">Loading events…</div>
+            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/60 p-6 shadow-sm">Loading…</div>
           ) : (
             <div className="overflow-x-auto rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/85 dark:bg-zinc-900/70 shadow-sm">
               <table className="min-w-full text-sm">
                 <thead className="bg-zinc-50 dark:bg-zinc-900/40">
                   <tr className="text-left">
                     <th className="px-4 py-3 font-semibold">Date</th>
-                    <th className="px-4 py-3 font-semibold">Event</th>
+                    <th className="px-4 py-3 font-semibold">Title</th>
                     <th className="px-4 py-3 font-semibold">Clients</th>
                     <th className="px-4 py-3 font-semibold">Notes</th>
                   </tr>
@@ -667,7 +673,17 @@ export default function Page(){
           )}
         </section>
 
-        <footer className="mt-8 text-xs text-zinc-500">Live from Google Sheets. Update the sheet → refresh here.</footer>
+        {/* Footer with Google Sheet link */}
+        <footer className="mt-8 text-xs text-zinc-500">
+          Last refreshed on page load. Update Google Sheets →
+          {" "}
+          {SHEET_URL ? (
+            <a className="text-emerald-600 dark:text-emerald-400 hover:underline" href={SHEET_URL} target="_blank" rel="noopener noreferrer">refresh here</a>
+          ) : (
+            <span className="opacity-70">set NEXT_PUBLIC_SHEET_URL to enable “refresh here”</span>
+          )}
+          .
+        </footer>
       </div>
     </main>
   );
