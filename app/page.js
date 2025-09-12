@@ -3,6 +3,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+/* ---------------- constants ---------------- */
+
 // Exact icon map (keys must match sheet values exactly)
 const COMMS_ICON = Object.freeze({
   "Phone": "☎️",
@@ -12,19 +14,44 @@ const COMMS_ICON = Object.freeze({
   "In Person": "🤝",
 });
 
+// Month labels for chips
+const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+// Event status labels (for the Events sheet)
+const STATUS_LABELS = [
+  "no content organised or needed",
+  "content planned",
+  "content scheduled",
+];
 
 /* ---------------- tiny utils ---------------- */
 function cn(...a){return a.filter(Boolean).join(" ");}
-function dateFromSheet(v){ if(!v) return null; const d = new Date(v); return Number.isNaN(d.getTime())?null:d; }
-function fmt(d){ return d ? d.toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"}) : "—"; }
+
+function dateFromSheet(v){
+  if(!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function fmt(d){
+  return d ? d.toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"}) : "—";
+}
+
 function normalizeSlug(s){ return String(s||"").trim().toUpperCase(); }
 function normalizeName(s){ return String(s||"").trim().toLowerCase(); }
 
-function monthsBetween(a,b){ if(!a||!b) return null;
+function monthsBetween(a,b){
+  if(!a||!b) return null;
   let m=(b.getFullYear()-a.getFullYear())*12+(b.getMonth()-a.getMonth());
-  if(b.getDate()<a.getDate()) m-=1; return Math.max(0,m); }
-function daysSince(d){ if(!d) return null; const ms=Date.now()-d.getTime();
-  return Number.isNaN(ms)?null:Math.max(0,Math.floor(ms/86400000)); }
+  if(b.getDate()<a.getDate()) m-=1;
+  return Math.max(0,m);
+}
+
+function daysSince(d){
+  if(!d) return null;
+  const ms=Date.now()-d.getTime();
+  return Number.isNaN(ms)?null:Math.max(0,Math.floor(ms/86400000));
+}
 
 /* LQR pill: green ≤3mo, orange =4mo, red ≥5mo, grey missing */
 function lqrStatus(date){
@@ -35,24 +62,19 @@ function lqrStatus(date){
   return {label:`LQR ${fmt(date)}`, cls:"bg-rose-500 text-white"};
 }
 
-// Shows “<icon> Last Comms <Xd>”
-// Green if ≤7 days, Red if >7 days, Grey if unknown
+/* Last Comms pill (uses exact icons, ≤7d green, >7d red, missing grey) */
 function commsRecency(date, type) {
-  const icon = COMMS_ICON[type] ?? "⚠️";
+  const icon = COMMS_ICON[type] ?? "🗒️";
   const d = daysSince(date);
   if (d == null) {
-    return {
-      label: `${icon} Last Comms —`,
-      cls: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
-    };
+    return { label: `${icon} Last Comms —`, cls: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300" };
   }
   return d <= 7
     ? { label: `${icon} Last Comms ${d}d`, cls: "bg-emerald-500 text-white" }
     : { label: `${icon} Last Comms ${d}d`, cls: "bg-rose-500 text-white" };
 }
 
-
-/* Monthly helpers */
+/* ---------------- Monthly helpers ---------------- */
 function toMonthIndex(m){
   if(m==null||m==="") return null;
   if(typeof m==="number") return Math.max(1,Math.min(12,m))-1;
@@ -66,34 +88,27 @@ function toMonthIndex(m){
 
 function normalizeMonthState(s){
   const raw = String(s || "").trim().toLowerCase();
-
-  // Your new three statuses
+  // New three statuses
   if (raw === "sent") return "sent";
   if (raw === "incomplete") return "incomplete";
   if (raw === "overdue") return "overdue";
-
-  // Legacy synonyms (optional safety)
+  // Legacy synonyms → map to closest
   if (["delivered","complete and sent","green"].includes(raw)) return "sent";
   if (["not sent","planned","plan","p","done","complete","completed","yellow"].includes(raw)) return "incomplete";
   if (["late","red"].includes(raw)) return "overdue";
-
   return null; // anything else = no entry ⇒ grey
 }
-
 
 function monthPillColor(state) {
   switch (String(state || "").toLowerCase()) {
     case "sent": return "green";
     case "incomplete": return "yellow";
     case "overdue": return "red";
-    default: return "grey"; // no entry / anything else
+    default: return "grey";
   }
 }
 
-
-
-
-/* Status normalization + per-client parsing (Events sheet) */
+/* ---------------- Events helpers ---------------- */
 function normalizeStatus(s){
   const raw=String(s||"").toLowerCase().replace(/\s+/g," ").trim();
   return STATUS_LABELS.find(x=>x===raw) || null;
@@ -109,19 +124,18 @@ function parseClientStatuses(cell){
   return map;
 }
 
-/* Split helpers */
+/* ---------------- misc helpers ---------------- */
 function splitNames(s){
   if(!s) return [];
   return String(s).split(/\/|,|&|\band\b|·|\+|\|/gi).map(x=>x.trim()).filter(Boolean);
 }
 
-/* ---------------- Theme toggle (iPhone/desktop safe) ---------------- */
+/* ---------------- Theme toggle ---------------- */
 function useTheme(){
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
-    // Initial from <html data-theme>, cookie, or OS
     const doc = document.documentElement;
     let current = doc.getAttribute("data-theme");
     if (!current) {
@@ -172,6 +186,7 @@ function MonthPill({label,color}){
   }[color||"grey"];
   return <span className={cn("px-2.5 py-1 rounded-full text-xs font-medium",styles)}>{label}</span>;
 }
+
 function StatusChip({status}){
   const map={
     "no content organised or needed":{cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",label:"No content"},
@@ -181,6 +196,7 @@ function StatusChip({status}){
   const s=map[normalizeStatus(status)||""]||{cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",label:"—"};
   return <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium",s.cls)}>{s.label}</span>;
 }
+
 function Tooltip({children,content,width="w-80"}){
   return (
     <span className="relative group inline-block">
@@ -193,6 +209,7 @@ function Tooltip({children,content,width="w-80"}){
     </span>
   );
 }
+
 function PersonBadge({ name, person, prefix }){
   return (
     <span className="relative group inline-flex items-center gap-1 cursor-help underline decoration-dotted underline-offset-2">
@@ -228,58 +245,59 @@ export default function Page(){
   const [error,setError]=useState("");
   const [q,setQ]=useState("");
   const { mounted, toggle } = useTheme();
-  const SHEET_URL = process.env.NEXT_PUBLIC_SHEET_URL; // set this in Vercel/ .env.local
+  const SHEET_URL = process.env.NEXT_PUBLIC_SHEET_URL;
 
   useEffect(()=>{ (async()=>{
-      try{
-        const [cRes,eRes,mRes,tRes,ctRes,sRes]=await Promise.all([
-          fetch("/api/sheet?sheet=Clients",{cache:"no-store"}),
-          fetch("/api/sheet?sheet=Events",{cache:"no-store"}),
-          fetch("/api/sheet?sheet=Monthly",{cache:"no-store"}),
-          fetch("/api/sheet?sheet=Team",{cache:"no-store"}),
-          fetch("/api/sheet?sheet=Contacts",{cache:"no-store"}),
-          fetch("/api/sheet?sheet=Scope",{cache:"no-store"}),
-        ]);
-        if(!cRes.ok) throw new Error("Failed to load Clients");
-        if(!eRes.ok) throw new Error("Failed to load Events");
-        if(!mRes.ok) throw new Error("Failed to load Monthly");
+    try{
+      const [cRes,eRes,mRes,tRes,ctRes,sRes]=await Promise.all([
+        fetch("/api/sheet?sheet=Clients",{cache:"no-store"}),
+        fetch("/api/sheet?sheet=Events",{cache:"no-store"}),
+        fetch("/api/sheet?sheet=Monthly",{cache:"no-store"}),
+        fetch("/api/sheet?sheet=Team",{cache:"no-store"}),
+        fetch("/api/sheet?sheet=Contacts",{cache:"no-store"}),
+        fetch("/api/sheet?sheet=Scope",{cache:"no-store"}),
+      ]);
+      if(!cRes.ok) throw new Error("Failed to load Clients");
+      if(!eRes.ok) throw new Error("Failed to load Events");
+      if(!mRes.ok) throw new Error("Failed to load Monthly");
 
-        const [cData,eData,mData,tData,ctData,sData]=await Promise.all([
-          cRes.json(), eRes.json(), mRes.json(),
-          tRes.ok ? tRes.json() : Promise.resolve({columns:[],rows:[]}),
-          ctRes.ok ? ctRes.json() : Promise.resolve({columns:[],rows:[]}),
-          sRes.ok ? sRes.json() : Promise.resolve({columns:[],rows:[]}),
-        ]);
-        const mapRows=(cols,rows)=>rows.map(r=>Object.fromEntries(r.map((v,i)=>[cols[i],v])));
+      const [cData,eData,mData,tData,ctData,sData]=await Promise.all([
+        cRes.json(), eRes.json(), mRes.json(),
+        tRes.ok ? tRes.json() : Promise.resolve({columns:[],rows:[]}),
+        ctRes.ok ? ctRes.json() : Promise.resolve({columns:[],rows:[]}),
+        sRes.ok ? sRes.json() : Promise.resolve({columns:[],rows:[]}),
+      ]);
+      const mapRows=(cols,rows)=>rows.map(r=>Object.fromEntries(r.map((v,i)=>[cols[i],v])));
 
-        setClients(
-          mapRows(cData.columns,cData.rows)
-            .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
-            .sort((a,b)=>(a["Client"]||"").localeCompare(b["Client"]||""))
-        );
-
-        setEvents(
-          mapRows(eData.columns,eData.rows)
-            .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
-            .map(o=>{
-              const _date=dateFromSheet(o.Date);
-              const _slugs=String(o.Clients||"").split(/[,\s]+/).map(s=>normalizeSlug(s)).filter(Boolean);
-              const _statusDefault=normalizeStatus(o.Status);
-              const _statusByClient=parseClientStatuses(o["Client Statuses"]||"");
-              return {...o,_date,_slugs,_statusDefault,_statusByClient};
-            })
-            .filter(o=>o._date)
-            .sort((a,b)=>a._date-b._date)
-        );
-
-        setMonthly(mapRows(mData.columns,mData.rows)
+      setClients(
+        mapRows(cData.columns,cData.rows)
           .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
-        );
+          .sort((a,b)=>(a["Client"]||"").localeCompare(b["Client"]||""))
+      );
 
-        setTeam(mapRows(tData.columns,tData.rows));
-        setContacts(mapRows(ctData.columns,ctData.rows));
-        setScope(mapRows(sData.columns,sData.rows));
-      }catch(e){ setError(e.message); }
+      setEvents(
+        mapRows(eData.columns,eData.rows)
+          .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
+          .map(o=>{
+            const _date=dateFromSheet(o.Date);
+            const _slugs=String(o.Clients||"").split(/[,\s]+/).map(s=>normalizeSlug(s)).filter(Boolean);
+            const _statusDefault=normalizeStatus(o.Status);
+            const _statusByClient=parseClientStatuses(o["Client Statuses"]||"");
+            return {...o,_date,_slugs,_statusDefault,_statusByClient};
+          })
+          .filter(o=>o._date)
+          .sort((a,b)=>a._date-b._date)
+      );
+
+      setMonthly(
+        mapRows(mData.columns,mData.rows)
+          .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
+      );
+
+      setTeam(mapRows(tData.columns,tData.rows));
+      setContacts(mapRows(ctData.columns,ctData.rows));
+      setScope(mapRows(sData.columns,sData.rows));
+    }catch(e){ setError(e.message); }
   })(); },[]);
 
   // Team maps
@@ -293,6 +311,7 @@ export default function Page(){
     });
     return map;
   },[team]);
+
   const leadsBySlug = useMemo(()=>{
     const out={}; (team||[]).forEach(t=>{
       String(t.Leads||"").split(/[,;\s]+/).forEach(s=>{
@@ -300,6 +319,7 @@ export default function Page(){
       });
     }); return out;
   },[team]);
+
   const assistsBySlug = useMemo(()=>{
     const out={}; (team||[]).forEach(t=>{
       String(t.Assists||"").split(/[,;\s]+/).forEach(s=>{
@@ -451,27 +471,21 @@ export default function Page(){
         {kpiData && (
           <section className="mt-6 flex flex-wrap gap-3">
             {kpiData.dueSoon.length>0 && (
-              <Tooltip
-                content={<ul className="text-sm list-disc pl-5">{kpiData.dueSoon.map((n,i)=><li key={i}>{n}</li>)}</ul>}
-              >
+              <Tooltip content={<ul className="text-sm list-disc pl-5">{kpiData.dueSoon.map((n,i)=><li key={i}>{n}</li>)}</ul>}>
                 <span className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 px-3 py-2 text-sm shadow-sm">
                   <span className="font-semibold">{kpiData.dueSoon.length}</span> LQR Due Soon
                 </span>
               </Tooltip>
             )}
             {kpiData.overdue.length>0 && (
-              <Tooltip
-                content={<ul className="text-sm list-disc pl-5">{kpiData.overdue.map((n,i)=><li key={i}>{n}</li>)}</ul>}
-              >
+              <Tooltip content={<ul className="text-sm list-disc pl-5">{kpiData.overdue.map((n,i)=><li key={i}>{n}</li>)}</ul>}>
                 <span className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 px-3 py-2 text-sm shadow-sm">
                   <span className="font-semibold">{kpiData.overdue.length}</span> LQR Overdue
                 </span>
               </Tooltip>
             )}
             {kpiData.comms7.length>0 && (
-              <Tooltip
-                content={<ul className="text-sm list-disc pl-5">{kpiData.comms7.map((n,i)=><li key={i}>{n}</li>)}</ul>}
-              >
+              <Tooltip content={<ul className="text-sm list-disc pl-5">{kpiData.comms7.map((n,i)=><li key={i}>{n}</li>)}</ul>}>
                 <span className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 px-3 py-2 text-sm shadow-sm">
                   <span className="font-semibold">{kpiData.comms7.length}</span> Comms &gt; 7 Days
                 </span>
@@ -484,21 +498,12 @@ export default function Page(){
         <section className="mt-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 p-4">
           <div className="text-xs font-medium mb-2 text-zinc-600 dark:text-zinc-300">Legend</div>
           <div className="flex flex-wrap gap-3 text-xs">
-            <span className="inline-flex items-center gap-2">
-              <span className="h-3 w-3 rounded-full bg-emerald-500"></span>Sent
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <span className="h-3 w-3 rounded-full bg-yellow-400"></span>Incomplete
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <span className="h-3 w-3 rounded-full bg-rose-500"></span>Overdue
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>Other
-            </span>
+            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-emerald-500"></span>Sent</span>
+            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-yellow-400"></span>Incomplete</span>
+            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-rose-500"></span>Overdue</span>
+            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>Other</span>
           </div>
         </section>
-
 
         {/* Clients grid */}
         {!filtered ? (
@@ -527,11 +532,13 @@ export default function Page(){
               const commsDate=dateFromSheet(c["Last Comms Date"]);
               const commsPill=commsRecency(commsDate, commsType);
 
-            const monthPills = MONTHS_SHORT.map((label, i) => {
-              const state = (monthsForYear[i] && monthsForYear[i].state) || null;
-              const color = monthPillColor(state);  // ← no date logic
-              return { label, color };
-            });
+              // Month pills for current year
+              const monthsForYear = (monthDataBySlug[slug]?.[currentYear]) || {};
+              const monthPills = MONTHS_SHORT.map((label, i) => {
+                const state = (monthsForYear[i] && monthsForYear[i].state) || null;
+                const color = monthPillColor(state);
+                return { label, color };
+              });
 
               // Up to 3 upcoming items
               const upcoming=(eventsBySlug[slug] || []).filter(e=>e._date>=new Date()).slice(0,3);
@@ -597,24 +604,20 @@ export default function Page(){
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-zinc-500">Lead:</span>
                           <span className="flex gap-2 flex-wrap">
-                            {( (leadsBySlug[slug]||[]).length ? leadsBySlug[slug] : splitNames(c["Client Lead"]).map(n=>({Name:n})) ).map((p,i)=>(
-                              <PersonBadge key={i} name={p.Name} person={teamByName[normalizeName(p.Name)] || p} />
-                            ))}
+                            {( (leadsBySlug[slug]||[]).length ? leadsBySlug[slug] : splitNames(c["Client Lead"]).map(n=>({Name:n})) ).map((p,i)=>(<PersonBadge key={i} name={p.Name} person={teamByName[normalizeName(p.Name)] || p} />))}
                           </span>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-zinc-500">Assist:</span>
                           <span className="flex gap-2 flex-wrap">
-                            {( (assistsBySlug[slug]||[]).length ? assistsBySlug[slug] : splitNames(c["Client Assist"]).map(n=>({Name:n})) ).map((p,i)=>(
-                              <PersonBadge key={i} name={p.Name} person={teamByName[normalizeName(p.Name)] || p} />
-                            ))}
+                            {( (assistsBySlug[slug]||[]).length ? assistsBySlug[slug] : splitNames(c["Client Assist"]).map(n=>({Name:n})) ).map((p,i)=>(<PersonBadge key={i} name={p.Name} person={teamByName[normalizeName(p.Name)] || p} />))}
                           </span>
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* comms + LQR (no raw date; only the colored “Last Comms 3d” pill + LQR pill) */}
+                  {/* comms + LQR */}
                   <div className="mt-4 flex items-center gap-2 text-sm flex-wrap">
                     <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", commsPill.cls)}>{commsPill.label}</span>
                     <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", lastLQR.cls)}>{lastLQR.label}</span>
