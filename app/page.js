@@ -527,12 +527,11 @@ export default function Page(){
               const commsDate=dateFromSheet(c["Last Comms Date"]);
               const commsPill=commsRecency(commsDate, commsType);
 
-              const monthsForYear=monthDataBySlug[slug]?.[currentYear] || {};
-              const monthPills=MONTHS_SHORT.map((label,i)=>{
-                const state = monthsForYear[i]?.state || null;
-                const color = monthPillColor(state, i, currentYear);
-                return {label,color};
-              });
+            const monthPills = MONTHS_SHORT.map((label, i) => {
+              const state = (monthsForYear[i] && monthsForYear[i].state) || null;
+              const color = monthPillColor(state);  // ← no date logic
+              return { label, color };
+            });
 
               // Up to 3 upcoming items
               const upcoming=(eventsBySlug[slug] || []).filter(e=>e._date>=new Date()).slice(0,3);
