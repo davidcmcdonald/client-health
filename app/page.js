@@ -54,27 +54,39 @@ function toMonthIndex(m){
   return null;
 }
 function normalizeMonthState(s){
-  const raw=String(s||"").trim().toLowerCase();
-  if(["planned","plan","p"].includes(raw)) return "planned";
-  if(["done","complete","completed","d"].includes(raw)) return "done";
-  if(["sent","delivered","s"].includes(raw)) return "sent";
+  const raw = String(s || "").trim().toLowerCase();
+
+  // New terms
+  if (["sent", "delivered", "green", "complete and sent"].includes(raw)) return "sent";
+  if (["incomplete", "yellow", "not sent"].includes(raw)) return "incomplete";
+  if (["overdue", "red", "late"].includes(raw)) return "overdue";
+
+  // Legacy terms still supported (mapped to incomplete)
+  if (["planned", "plan", "p"].includes(raw)) return "incomplete";
+  if (["done", "complete", "completed", "d"].includes(raw)) return "incomplete";
+
   return null;
 }
 
-/* Legend mapping & pill color:
-   Green = sent
-   Red   = month is >30 days past and not sent
-   Yellow= “incomplete” (planned/done but not sent, and not overdue)
-   Grey  = others */
+
 function monthPillColor(state, monthIndex, year){
+  // Manual "overdue" always wins visually
+  if (state === "overdue") return "red";
+  if (state === "sent") return "green";
+
+  // Date-based overdue: >30 days after the end of that month and NOT sent
   const now = new Date();
-  const monthEnd = new Date(year, monthIndex+1, 0, 23, 59, 59);
-  const overdue = (now.getTime() - monthEnd.getTime()) >= (30*24*3600*1000);
-  if(state==="sent") return "green";
-  if(overdue && state!=="sent") return "red";
-  if(state==="planned" || state==="done") return "yellow";
+  const monthEnd = new Date(year, monthIndex + 1, 0, 23, 59, 59);
+  const overdueByTime = (now.getTime() - monthEnd.getTime()) >= (30 * 24 * 3600 * 1000);
+  if (overdueByTime && state !== "sent") return "red";
+
+  // Everything not sent and not overdue (by time) but marked incomplete → yellow
+  if (state === "incomplete") return "yellow";
+
+  // Otherwise grey
   return "grey";
 }
+
 
 /* Status normalization + per-client parsing (Events sheet) */
 function normalizeStatus(s){
