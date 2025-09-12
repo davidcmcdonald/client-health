@@ -55,37 +55,42 @@ function toMonthIndex(m){
 }
 function normalizeMonthState(s){
   const raw = String(s || "").trim().toLowerCase();
-
-  // New terms
-  if (["sent", "delivered", "green", "complete and sent"].includes(raw)) return "sent";
-  if (["incomplete", "yellow", "not sent"].includes(raw)) return "incomplete";
-  if (["overdue", "red", "late"].includes(raw)) return "overdue";
-
-  // Legacy terms still supported (mapped to incomplete)
-  if (["planned", "plan", "p"].includes(raw)) return "incomplete";
-  if (["done", "complete", "completed", "d"].includes(raw)) return "incomplete";
-
+  if (["sent","delivered","green","complete and sent"].includes(raw)) return "sent";
+  if (["incomplete","yellow","not sent"].includes(raw)) return "incomplete";
+  if (["overdue","red","late"].includes(raw)) return "overdue";
+  if (["planned","plan","p","done","complete","completed","d"].includes(raw)) return "incomplete";
   return null;
 }
 
 
-function monthPillColor(state, monthIndex, year){
-  // Manual "overdue" always wins visually
-  if (state === "overdue") return "red";
-  if (state === "sent") return "green";
+function monthPillColor(state, monthIndex, year) {
+  const s = String(state || "").trim().toLowerCase();
 
-  // Date-based overdue: >30 days after the end of that month and NOT sent
-  const now = new Date();
-  const monthEnd = new Date(year, monthIndex + 1, 0, 23, 59, 59);
-  const overdueByTime = (now.getTime() - monthEnd.getTime()) >= (30 * 24 * 3600 * 1000);
-  if (overdueByTime && state !== "sent") return "red";
+  // Explicit states first
+  if (s === "sent") return "green";
+  if (s === "overdue") return "red";
 
-  // Everything not sent and not overdue (by time) but marked incomplete → yellow
-  if (state === "incomplete") return "yellow";
+  // Coerce and validate inputs
+  const mi = Number(monthIndex);
+  const yr = Number(year);
+  const miValid = Number.isFinite(mi) && mi >= 0 && mi <= 11;
+  const yrValid = Number.isFinite(yr);
 
-  // Otherwise grey
+  // If we can't compute dates, fall back to state only
+  if (!miValid || !yrValid) return s === "incomplete" ? "yellow" : "grey";
+
+  // Overdue by time: >30 days after the end of that month and NOT sent
+  const monthEnd = new Date(yr, mi + 1, 0, 23, 59, 59, 999);
+  const OVERDUE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+  const overdueByTime = Date.now() - monthEnd.getTime() >= OVERDUE_MS;
+
+  if (overdueByTime && s !== "sent") return "red";
+  if (s === "incomplete") return "yellow";
+
+  // Everything else
   return "grey";
 }
+
 
 
 /* Status normalization + per-client parsing (Events sheet) */
@@ -475,16 +480,25 @@ export default function Page(){
           </section>
         )}
 
-        {/* Legend — sent/green, incomplete/yellow, overdue/red, other/grey */}
+        {/* Legend — Sent (green), Incomplete (yellow), Overdue (red), Other (grey) */}
         <section className="mt-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 p-4">
           <div className="text-xs font-medium mb-2 text-zinc-600 dark:text-zinc-300">Legend</div>
           <div className="flex flex-wrap gap-3 text-xs">
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-emerald-500"></span>Sent</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-yellow-400"></span>Incomplete</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-rose-500"></span>Overdue (&gt;30d past, not Sent)</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>Other</span>
+            <span className="inline-flex items-center gap-2">
+              <span className="h-3 w-3 rounded-full bg-emerald-500"></span>Sent
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="h-3 w-3 rounded-full bg-yellow-400"></span>Incomplete
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="h-3 w-3 rounded-full bg-rose-500"></span>Overdue
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>Other
+            </span>
           </div>
         </section>
+
 
         {/* Clients grid */}
         {!filtered ? (
