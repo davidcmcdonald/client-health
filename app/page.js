@@ -177,26 +177,6 @@ function useTheme(){
 }
 
 /* ---------------- UI atoms ---------------- */
-function MonthPill({label,color}){
-  const styles={
-    green:"bg-emerald-500 text-white",
-    yellow:"bg-yellow-400 text-zinc-900",
-    red:"bg-rose-500 text-white",
-    grey:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
-  }[color||"grey"];
-  return <span className={cn("px-2.5 py-1 rounded-full text-xs font-medium",styles)}>{label}</span>;
-}
-
-function StatusChip({status}){
-  const map={
-    "no content organised or needed":{cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",label:"No content"},
-    "content planned":{cls:"bg-amber-500 text-white",label:"Planned"},
-    "content scheduled":{cls:"bg-sky-500 text-white",label:"Scheduled"},
-  };
-  const s=map[normalizeStatus(status)||""]||{cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",label:"—"};
-  return <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium",s.cls)}>{s.label}</span>;
-}
-
 function Tooltip({children,content,width="w-80"}){
   return (
     <span className="relative group inline-block">
@@ -208,6 +188,40 @@ function Tooltip({children,content,width="w-80"}){
       </span>
     </span>
   );
+}
+
+function MonthPill({ label, color, note }) {
+  const styles = {
+    green: "bg-emerald-500 text-white",
+    yellow: "bg-yellow-400 text-zinc-900",
+    red:   "bg-rose-500 text-white",
+    grey:  "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
+  }[color || "grey"];
+
+  const pill = (
+    <span
+      className={cn("px-2.5 py-1 rounded-full text-xs font-medium", styles)}
+      {...(note ? { title: note } : {})} // mobile fallback tooltip
+    >
+      {label}
+    </span>
+  );
+
+  return note ? (
+    <Tooltip content={<div className="text-xs leading-snug whitespace-pre-wrap">{note}</div>}>
+      {pill}
+    </Tooltip>
+  ) : pill;
+}
+
+function StatusChip({status}){
+  const map={
+    "no content organised or needed":{cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",label:"No content"},
+    "content planned":{cls:"bg-amber-500 text-white",label:"Planned"},
+    "content scheduled":{cls:"bg-sky-500 text-white",label:"Scheduled"},
+  };
+  const s=map[normalizeStatus(status)||""]||{cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",label:"—"};
+  return <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium",s.cls)}>{s.label}</span>;
 }
 
 function PersonBadge({ name, person, prefix }){
@@ -365,20 +379,28 @@ export default function Page(){
     return m;
   },[scope]);
 
-  // Monthly: slug -> year -> monthIndex -> { state }
-  const currentYear=new Date().getFullYear();
-  const monthDataBySlug=useMemo(()=>{
-    const out={}; if(!monthly) return out;
-    for(const row of monthly){
-      const slug=normalizeSlug(row.Slug||row.slug);
-      const year=Number(row.Year||row.year);
-      const mIdx=toMonthIndex(row.Month);
-      const state=normalizeMonthState(row.Status || row.status);
-      if(!slug || Number.isNaN(year) || mIdx==null) continue;
-      out[slug] ||= {}; out[slug][year] ||= {}; out[slug][year][mIdx] = {state};
+  // Monthly: slug -> year -> monthIndex -> { state, note }
+  const currentYear = new Date().getFullYear();
+  const monthDataBySlug = useMemo(() => {
+    const out = {};
+    if (!monthly) return out;
+
+    for (const row of monthly) {
+      const slug = normalizeSlug(row.Slug ?? row.slug);
+      const year = Number(row.Year ?? row.year);
+      const mIdx = toMonthIndex(row.Month ?? row.month);
+      const state = normalizeMonthState(row.Status ?? row.status);
+      const note = String(row.Notes ?? row.Note ?? row.notes ?? "").trim();
+
+      if (!slug || !Number.isFinite(year) || mIdx == null) continue;
+
+      out[slug] ??= {};
+      out[slug][year] ??= {};
+      out[slug][year][mIdx] = { state, note };
     }
+
     return out;
-  },[monthly]);
+  }, [monthly]);
 
   // Events grouped by slug
   const eventsBySlug=useMemo(()=>{
@@ -401,7 +423,7 @@ export default function Page(){
     );
   },[clients,q]);
 
-  // KPI chips (only show if count > 0) + hover lists
+  // KPI chips (only show relevant, with hover list)
   const kpiData=useMemo(()=>{
     if(!clients) return null;
     const dueSoon=[], overdue=[], comms7=[];
@@ -535,9 +557,11 @@ export default function Page(){
               // Month pills for current year
               const monthsForYear = (monthDataBySlug[slug]?.[currentYear]) || {};
               const monthPills = MONTHS_SHORT.map((label, i) => {
-                const state = (monthsForYear[i] && monthsForYear[i].state) || null;
+                const entry = monthsForYear[i] || {};
+                const state = entry.state || null;
+                const note  = entry.note  || "";
                 const color = monthPillColor(state);
-                return { label, color };
+                return { label, color, note };
               });
 
               // Up to 3 upcoming items
@@ -627,7 +651,7 @@ export default function Page(){
                   <div className="mt-4">
                     <div className="text-xs uppercase tracking-wide text-zinc-500 mb-2">This year</div>
                     <div className="grid grid-cols-6 gap-2">
-                      {monthPills.map((p,i)=><MonthPill key={i} label={p.label} color={p.color}/>)}
+                      {monthPills.map((p,i)=><MonthPill key={i} label={p.label} color={p.color} note={p.note}/>)}
                     </div>
                   </div>
 
