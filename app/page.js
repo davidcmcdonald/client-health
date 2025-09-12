@@ -3,14 +3,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-/* ---------------- constants ---------------- */
-const COMMS_ICON = { Email: "✉️", Text: "💬", Phone: "📞" };
-const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-const STATUS_LABELS = [
-  "no content organised or needed",
-  "content planned",
-  "content scheduled",
-];
+// Exact icon map (keys must match sheet values exactly)
+const COMMS_ICON = Object.freeze({
+  "Phone": "☎️",
+  "Email": "📧",
+  "Text": "📱",
+  "Online Meeting": "💻",
+  "In Person": "🤝",
+});
+
 
 /* ---------------- tiny utils ---------------- */
 function cn(...a){return a.filter(Boolean).join(" ");}
@@ -34,13 +35,22 @@ function lqrStatus(date){
   return {label:`LQR ${fmt(date)}`, cls:"bg-rose-500 text-white"};
 }
 
-/* Last comms pill: green ≤7d, red >7d, grey missing. Label: “Last Comms 3d” */
-function commsRecency(date, type){
-  const d=daysSince(date);
-  if(d==null) return {label:`${COMMS_ICON[type]||"🗒️"} Last Comms —`, cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300"};
-  const base = `${COMMS_ICON[type]||"🗒️"} Last Comms ${d}d`;
-  return d<=7 ? {label:base, cls:"bg-emerald-500 text-white"} : {label:base, cls:"bg-rose-500 text-white"};
+// Shows “<icon> Last Comms <Xd>”
+// Green if ≤7 days, Red if >7 days, Grey if unknown
+function commsRecency(date, type) {
+  const icon = COMMS_ICON[type] ?? "⚠️";
+  const d = daysSince(date);
+  if (d == null) {
+    return {
+      label: `${icon} Last Comms —`,
+      cls: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
+    };
+  }
+  return d <= 7
+    ? { label: `${icon} Last Comms ${d}d`, cls: "bg-emerald-500 text-white" }
+    : { label: `${icon} Last Comms ${d}d`, cls: "bg-rose-500 text-white" };
 }
+
 
 /* Monthly helpers */
 function toMonthIndex(m){
@@ -53,43 +63,33 @@ function toMonthIndex(m){
   const n=Number(s); if(!Number.isNaN(n)) return Math.max(1,Math.min(12,n))-1;
   return null;
 }
+
 function normalizeMonthState(s){
   const raw = String(s || "").trim().toLowerCase();
-  if (["sent","delivered","green","complete and sent"].includes(raw)) return "sent";
-  if (["incomplete","yellow","not sent"].includes(raw)) return "incomplete";
-  if (["overdue","red","late"].includes(raw)) return "overdue";
-  if (["planned","plan","p","done","complete","completed","d"].includes(raw)) return "incomplete";
-  return null;
+
+  // Your new three statuses
+  if (raw === "sent") return "sent";
+  if (raw === "incomplete") return "incomplete";
+  if (raw === "overdue") return "overdue";
+
+  // Legacy synonyms (optional safety)
+  if (["delivered","complete and sent","green"].includes(raw)) return "sent";
+  if (["not sent","planned","plan","p","done","complete","completed","yellow"].includes(raw)) return "incomplete";
+  if (["late","red"].includes(raw)) return "overdue";
+
+  return null; // anything else = no entry ⇒ grey
 }
 
 
-function monthPillColor(state, monthIndex, year) {
-  const s = String(state || "").trim().toLowerCase();
-
-  // Explicit states first
-  if (s === "sent") return "green";
-  if (s === "overdue") return "red";
-
-  // Coerce and validate inputs
-  const mi = Number(monthIndex);
-  const yr = Number(year);
-  const miValid = Number.isFinite(mi) && mi >= 0 && mi <= 11;
-  const yrValid = Number.isFinite(yr);
-
-  // If we can't compute dates, fall back to state only
-  if (!miValid || !yrValid) return s === "incomplete" ? "yellow" : "grey";
-
-  // Overdue by time: >30 days after the end of that month and NOT sent
-  const monthEnd = new Date(yr, mi + 1, 0, 23, 59, 59, 999);
-  const OVERDUE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-  const overdueByTime = Date.now() - monthEnd.getTime() >= OVERDUE_MS;
-
-  if (overdueByTime && s !== "sent") return "red";
-  if (s === "incomplete") return "yellow";
-
-  // Everything else
-  return "grey";
+function monthPillColor(state) {
+  switch (String(state || "").toLowerCase()) {
+    case "sent": return "green";
+    case "incomplete": return "yellow";
+    case "overdue": return "red";
+    default: return "grey"; // no entry / anything else
+  }
 }
+
 
 
 
