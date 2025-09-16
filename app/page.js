@@ -7,9 +7,9 @@ import { useEffect, useMemo, useState } from "react";
 
 // Exact icon map (keys must match sheet values exactly)
 const COMMS_ICON = Object.freeze({
-  "Phone": "☎️",
-  "Email": "📧",
-  "Text": "📱",
+  Phone: "☎️",
+  Email: "📧",
+  Text: "📱",
   "Online Meeting": "💻",
   "In Person": "🤝",
 });
@@ -23,9 +23,9 @@ const STATUS_LABELS = [
   "content planned",
   "content scheduled",
 ];
-<div className="flex items-center gap-3"></div>
+
 /* ---------------- tiny utils ---------------- */
-function cn(...a){ return a.filter(Boolean).join(" "); }
+function cn(...a){return a.filter(Boolean).join(" ");}
 
 function dateFromSheet(v){
   if (!v) return null;
@@ -53,6 +53,9 @@ function dateFromSheet(v){
 function fmt(d){
   return d ? d.toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"}) : "—";
 }
+function fmtDM(d){
+  return d ? d.toLocaleDateString(undefined,{day:"numeric",month:"short"}) : "—";
+}
 
 function normalizeSlug(s){ return String(s||"").trim().toUpperCase(); }
 function normalizeName(s){ return String(s||"").trim().toLowerCase(); }
@@ -70,43 +73,50 @@ function daysSince(d){
   return Number.isNaN(ms)?null:Math.max(0,Math.floor(ms/86400000));
 }
 
-// Handle numeric or yes/no for scope values
-function numOrBool(v){
-  if (v == null) return 0;
-  const s = String(v).trim().toLowerCase();
-  if (s === "yes" || s === "true" || s === "y") return 1;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : 0;
-}
-
-/* LQR pill: green ≤3mo, orange =4mo, red ≥5mo, grey missing */
+/* LQR pill: label uses day+month (no year). green ≤3mo, orange =4mo, red ≥5mo, grey missing */
 function lqrStatus(date){
   const m=monthsBetween(date,new Date());
   if(m==null) return {label:"LQR —", cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300"};
-  if(m<=3)   return {label:`LQR ${fmt(date)}`, cls:"bg-emerald-500 text-white"};
-  if(m===4)  return {label:`LQR ${fmt(date)}`, cls:"bg-orange-500 text-white"};
-  return       {label:`LQR ${fmt(date)}`, cls:"bg-rose-500 text-white"};
+  const base=`LQR ${fmtDM(date)}`;
+  if(m<=3) return {label:base, cls:"bg-emerald-500 text-white"};
+  if(m===4) return {label:base, cls:"bg-orange-500 text-white"};
+  return {label:base, cls:"bg-rose-500 text-white"};
 }
 
-/* Comms pill (≤7d green, >7d red, missing grey) */
+/* Comms pill: icon + days only; tooltip says method + full date */
 function commsRecency(date, type) {
   const icon = COMMS_ICON[type] ?? "🗒️";
   const d = daysSince(date);
   if (d == null) {
-    return { label: `${icon} Comms —`, cls: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300" };
+    return {
+      label: `${icon} —`,
+      cls: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
+      note: "No last communication date on file.",
+    };
   }
-  return d <= 7
-    ? { label: `${icon} Comms ${d}d`, cls: "bg-emerald-500 text-white" }
-    : { label: `${icon} Comms ${d}d`, cls: "bg-rose-500 text-white" };
+  const when = fmt(date);
+  const by = type || "Unknown method";
+  return {
+    label: `${icon} ${d}d`,
+    cls: d <= 7 ? "bg-emerald-500 text-white" : "bg-rose-500 text-white",
+    note: `Last communication was by ${by} on ${when}.`,
+  };
 }
 
-/* Ad Report pill (monthly cadence: ≤31d green, 32–45d orange, >45d red, missing grey) */
-function adReportStatus(date){
-  const d = daysSince(date);
-  if(d==null) return { label: "AdRpt —", cls: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300" };
-  if(d<=31)   return { label: `AdRpt ${fmt(date)}`, cls: "bg-emerald-500 text-white" };
-  if(d<=45)   return { label: `AdRpt ${fmt(date)}`, cls: "bg-orange-500 text-white" };
-  return        { label: `AdRpt ${fmt(date)}`, cls: "bg-rose-500 text-white" };
+/* Ads pill: label "Ads {day month}" (no year); tooltip shows last report + ad refresh */
+function adReportStatus(reportDate, refreshDate){
+  const d = daysSince(reportDate);
+  const baseLabel = reportDate ? `Ads ${fmtDM(reportDate)}` : "Ads —";
+  let cls = "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300"; // missing
+  if (d != null) {
+    if (d <= 31) cls = "bg-emerald-500 text-white";
+    else if (d <= 45) cls = "bg-orange-500 text-white";
+    else cls = "bg-rose-500 text-white";
+  }
+  const note =
+    `Last monthly report: ${fmt(reportDate)}\n` +
+    `Ad refresh: ${fmt(refreshDate)}`;
+  return { label: baseLabel, cls, note };
 }
 
 /* ---------------- Monthly helpers ---------------- */
@@ -121,24 +131,25 @@ function toMonthIndex(m){
   return null;
 }
 
-// Map sheet values to sent/incomplete/overdue with friendlier synonyms
 function normalizeMonthState(s){
   const raw = String(s || "").trim().toLowerCase();
-  // Sent (green)
-  if (["done","complete","completed","delivered","complete and sent","sent","green"].includes(raw)) return "sent";
-  // Incomplete (orange)
-  if (["not sent","planned","plan","p","in progress","yellow","incomplete"].includes(raw)) return "incomplete";
-  // Overdue (red)
-  if (["late","overdue","red"].includes(raw)) return "overdue";
+  // New three statuses
+  if (raw === "sent") return "sent";
+  if (raw === "incomplete") return "incomplete";
+  if (raw === "overdue") return "overdue";
+  // Legacy synonyms → map to closest
+  if (["delivered","complete and sent","green"].includes(raw)) return "sent";
+  if (["not sent","planned","plan","p","done","complete","completed","yellow"].includes(raw)) return "incomplete";
+  if (["late","red"].includes(raw)) return "overdue";
   return null; // anything else = no entry ⇒ grey
 }
 
 function monthPillColor(state) {
   switch (String(state || "").toLowerCase()) {
-    case "sent":       return "green";
+    case "sent": return "green";
     case "incomplete": return "yellow";
-    case "overdue":    return "red";
-    default:           return "grey";
+    case "overdue": return "red";
+    default: return "grey";
   }
 }
 
@@ -328,10 +339,10 @@ export default function Page(){
         mapRows(eData.columns,eData.rows)
           .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
           .map(o=>{
-            const _date = dateFromSheet(o.Date);
-            const _slugs = splitNames(o.Clients).map(s=>normalizeSlug(s)).filter(Boolean);
-            const _statusDefault = normalizeStatus(o.Status);
-            const _statusByClient = parseClientStatuses(o["Client Statuses"]||"");
+            const _date=dateFromSheet(o.Date);
+            const _slugs=String(o.Clients||"").split(/[,\s]+/).map(s=>normalizeSlug(s)).filter(Boolean);
+            const _statusDefault=normalizeStatus(o.Status);
+            const _statusByClient=parseClientStatuses(o["Client Statuses"]||"");
             return {...o,_date,_slugs,_statusDefault,_statusByClient};
           })
           .filter(o=>o._date)
@@ -485,7 +496,7 @@ export default function Page(){
   }
 
   return (
-    <main className="min-h-screen relative">
+    <main className="min-h-screen relative overflow-hidden">
       {/* soft gradient bg */}
       <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60%_50%_at_10%_0%,rgba(16,185,129,0.12),transparent_60%),radial-gradient(50%_50%_at_100%_0%,rgba(59,130,246,0.10),transparent_50%),linear-gradient(to_bottom,#fafafa,transparent_30%)] dark:bg-[radial-gradient(60%_50%_at_10%_0%,rgba(16,185,129,0.12),transparent_60%),radial-gradient(50%_50%_at_100%_0%,rgba(59,130,246,0.10),transparent_50%),linear-gradient(to_bottom,#0b0b0b,transparent_30%)]"></div>
 
@@ -520,21 +531,9 @@ export default function Page(){
                   <span className="text-lg">🌓</span>
                 </button>
               )}
-
-              <form method="POST" action="/api/logout">
-                <button
-                  type="submit"
-                  className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-sm shadow-sm hover:shadow"
-                  title="Sign out"
-                >
-                  <span className="hidden sm:inline">Sign out</span>
-                  <span aria-hidden>🔒</span>
-                </button>
-              </form>
             </div>
-            </div>
-            </header>
-
+          </div>
+        </header>
 
         {/* KPI row — only show relevant, with hover list */}
         {kpiData && (
@@ -556,7 +555,7 @@ export default function Page(){
             {kpiData.comms7.length>0 && (
               <Tooltip content={<ul className="text-sm list-disc pl-5">{kpiData.comms7.map((n,i)=><li key={i}>{n}</li>)}</ul>}>
                 <span className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 px-3 py-2 text-sm shadow-sm">
-                  <span className="font-semibold">{kpiData.comms7.length}</span> Comms &gt; 7d
+                  <span className="font-semibold">{kpiData.comms7.length}</span> Comms &gt; 7 Days
                 </span>
               </Tooltip>
             )}
@@ -590,26 +589,38 @@ export default function Page(){
               const slug=normalizeSlug(c.Slug);
               const website = c.Link || c.Website || null;
 
+              // Team (sheet) with fallback to Clients names
+              const teamLeads = (leadsBySlug[slug] || []);
+              const teamAssists = (assistsBySlug[slug] || []);
+              const fallbackLeads = !teamLeads.length ? splitNames(c["Client Lead"]).map(n => ({ Name:n })) : [];
+              const fallbackAssists = !teamAssists.length ? splitNames(c["Client Assist"]).map(n => ({ Name:n })) : [];
+
               const lastLQR=lqrStatus(dateFromSheet(c["Last Quarterly Review"]));
               const commsType=c["Last Comms Type"];
               const commsDate=dateFromSheet(c["Last Comms Date"]);
               const commsPill=commsRecency(commsDate, commsType);
 
+              // Ads: pull both report date and ad refresh (new field variants supported)
               const adReportDate = dateFromSheet(
                 c["Last Ad Report"] ||
                 c["Ad Report Sent"] ||
                 c["Ads Report Sent"] ||
                 c["Last Ads Report"]
               );
-
-              // Show if there’s a date OR Scope says they have ads (numbers or YES/NO)
-              const hasAds = !!(
-                adReportDate ||
-                numOrBool(scopeBySlug[slug]?.metaAds) ||
-                numOrBool(scopeBySlug[slug]?.googleAds)
+              const adRefreshDate = dateFromSheet(
+                c["Ad Refresh"] ||
+                c["Ads Refresh"] ||
+                c["Ad Refresh Date"] ||
+                c["Last Ad Refresh"]
               );
 
-              const adRptPill = hasAds ? adReportStatus(adReportDate) : null;
+              // Show if there’s a date OR Scope says they have ads
+              const hasAds = !!(
+                adReportDate ||
+                Number(scopeBySlug[slug]?.metaAds || 0) ||
+                Number(scopeBySlug[slug]?.googleAds || 0)
+              );
+              const adRptPill = hasAds ? adReportStatus(adReportDate, adRefreshDate) : null;
 
               // Month pills for current year
               const monthsForYear = (monthDataBySlug[slug]?.[currentYear]) || {};
@@ -698,15 +709,40 @@ export default function Page(){
                     </div>
                   </div>
 
-                  {/* comms + LQR + AdRpt */}
+                  {/* comms + LQR + Ads */}
                   <div className="mt-4 flex items-center gap-2 text-sm flex-wrap">
-                    <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", commsPill.cls)}>{commsPill.label}</span>
-                    <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", lastLQR.cls)}>{lastLQR.label}</span>
-                    {adRptPill && (
-                      <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", adRptPill.cls)}>
-                        {adRptPill.label}
-                      </span>
-                    )}
+                    {/* Comms with hover */}
+                    {(() => {
+                      const chip = (
+                        <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", commsPill.cls)}>
+                          {commsPill.label}
+                        </span>
+                      );
+                      return commsPill.note ? (
+                        <Tooltip content={<div className="text-xs whitespace-pre-wrap leading-snug">{commsPill.note}</div>}>
+                          {chip}
+                        </Tooltip>
+                      ) : chip;
+                    })()}
+
+                    {/* LQR (no year in label now) */}
+                    <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", lastLQR.cls)}>
+                      {lastLQR.label}
+                    </span>
+
+                    {/* Ads with hover */}
+                    {adRptPill && (() => {
+                      const chip = (
+                        <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", adRptPill.cls)}>
+                          {adRptPill.label}
+                        </span>
+                      );
+                      return adRptPill.note ? (
+                        <Tooltip content={<div className="text-xs whitespace-pre-wrap leading-snug">{adRptPill.note}</div>}>
+                          {chip}
+                        </Tooltip>
+                      ) : chip;
+                    })()}
                   </div>
 
                   {/* months */}
