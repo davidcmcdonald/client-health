@@ -28,10 +28,28 @@ const STATUS_LABELS = [
 function cn(...a){return a.filter(Boolean).join(" ");}
 
 function dateFromSheet(v){
-  if(!v) return null;
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? null : d;
+  if (!v) return null;
+
+  // Already a Date?
+  if (v instanceof Date && !Number.isNaN(v.getTime())) return v;
+
+  const s = String(v).trim();
+
+  // Try native (works for ISO like 2025-09-15)
+  const iso = new Date(s);
+  if (!Number.isNaN(iso.getTime())) return iso;
+
+  // Fallback: dd/mm/yyyy or dd-mm-yyyy
+  const m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+  if (m) {
+    const [, d, mo, y] = m;
+    const Y = y.length === 2 ? Number(`20${y}`) : Number(y);
+    return new Date(Y, Number(mo) - 1, Number(d));
+  }
+
+  return null;
 }
+
 
 function fmt(d){
   return d ? d.toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"}) : "—";
@@ -565,9 +583,25 @@ export default function Page(){
               const commsDate=dateFromSheet(c["Last Comms Date"]);
               const commsPill=commsRecency(commsDate, commsType);
 
-              const hasAds = !!(Number(scopeBySlug[slug]?.metaAds||0) || Number(scopeBySlug[slug]?.googleAds||0));
-              const adReportDate = dateFromSheet(c["Last Ad Report"] || c["Ad Report Sent"] || c["Ads Report Sent"] || c["Last Ads Report"]);
+              
+            // ⬇️ Replace everything from here...
+            const adReportDate = dateFromSheet(
+              c["Last Ad Report"] ||
+              c["Ad Report Sent"] ||
+              c["Ads Report Sent"] ||
+              c["Last Ads Report"]
+            );
+
+            // Show if there’s a date OR Scope says they have ads
+            const hasAds = !!(
+              adReportDate ||
+              Number(scopeBySlug[slug]?.metaAds || 0) ||
+              Number(scopeBySlug[slug]?.googleAds || 0)
+            );
+
+
               const adRptPill = hasAds ? adReportStatus(adReportDate) : null;
+
 
               
               // Month pills for current year
@@ -658,11 +692,16 @@ export default function Page(){
                   </div>
 
                   {/* comms + LQR */}
-                  <div className="mt-4 flex items-center gap-2 text-sm flex-wrap">
-                    <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", commsPill.cls)}>{commsPill.label}</span>
-                    <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", lastLQR.cls)}>{lastLQR.label}</span>
-                    {adRptPill && (<span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", adRptPill.cls)}>{adRptPill.label}</span>)}
-                  </div>
+                <div className="mt-4 flex items-center gap-2 text-sm flex-wrap">
+                  <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", commsPill.cls)}>{commsPill.label}</span>
+                  <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", lastLQR.cls)}>{lastLQR.label}</span>
+                  {adRptPill && (
+                    <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", adRptPill.cls)}>
+                      {adRptPill.label}
+                    </span>
+                  )}
+                </div>
+
 
                   {/* months */}
                   <div className="mt-4">
