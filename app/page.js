@@ -208,17 +208,6 @@ function MonthPill({ label, color, note }) {
     grey:  "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
   }
 
-function HealthBar({ weeksAhead, postsPlanned, postsPerWeek }){
-  const segs = Array.from({length:4}, (_,i)=>{
-    if(weeksAhead<1 && i===0) return "bg-rose-500";
-    return i < Math.max(0, Math.min(4, weeksAhead)) ? "bg-orange-500" : "bg-zinc-300 dark:bg-zinc-700";
-  });
-  const tip = `${weeksAhead} wk ahead • planned ${postsPlanned} / need ${postsPerWeek}/wk`;
-  return (
-    <div className="mb-3">
-      <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">Health</div>
-      <div className="flex gap-1" title={tip}>
-        {segs.map((cls,i)=>(<span key={i} className={cn("h-2.5 w-6 rounded", cls)} />))}
       </div>
     </div>
   );
@@ -586,17 +575,7 @@ export default function Page(){
               const adReportDate = dateFromSheet(c["Last Ad Report"] || c["Ad Report Sent"] || c["Ads Report Sent"] || c["Last Ads Report"]);
               const adRptPill = hasAds ? adReportStatus(adReportDate) : null;
 
-              // Health bar inputs (social clients only)
-              const postsPerWeek = Number(scopeBySlug[slug]?.posts||0) || 0;
-              let postsPlanned = 0, weeksAhead = 0;
-              if (postsPerWeek > 0) {
-                const now = new Date();
-                const in28d = (eventsBySlug[slug]||[]).filter(e=>e._date && (e._date - now) >= 0 && (e._date - now) <= (28*24*60*60*1000));
-                postsPlanned = in28d.length;
-                weeksAhead = Math.floor(postsPlanned / postsPerWeek);
-                if (weeksAhead > 4) weeksAhead = 4;
-              }
-
+              
               // Month pills for current year
               const monthsForYear = (monthDataBySlug[slug]?.[currentYear]) || {};
               const monthPills = MONTHS_SHORT.map((label, i) => {
@@ -684,10 +663,7 @@ export default function Page(){
                     </div>
                   </div>
 
-                  {/* health bar (social clients) */}
-                  {postsPerWeek>0 && <HealthBar weeksAhead={weeksAhead} postsPlanned={postsPlanned} postsPerWeek={postsPerWeek} />}
-
-                  {/* comms + LQR */}
+                  {/* comms + LQR */}}
                   <div className="mt-4 flex items-center gap-2 text-sm flex-wrap">
                     <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", commsPill.cls)}>{commsPill.label}</span>
                     <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", lastLQR.cls)}>{lastLQR.label}</span>
