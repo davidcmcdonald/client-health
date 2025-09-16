@@ -23,7 +23,7 @@ const STATUS_LABELS = [
   "content planned",
   "content scheduled",
 ];
-
+<div className="flex items-center gap-3"></div>
 /* ---------------- tiny utils ---------------- */
 function cn(...a){ return a.filter(Boolean).join(" "); }
 
@@ -520,9 +520,21 @@ export default function Page(){
                   <span className="text-lg">🌓</span>
                 </button>
               )}
+
+              <form method="POST" action="/api/logout">
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-sm shadow-sm hover:shadow"
+                  title="Sign out"
+                >
+                  <span className="hidden sm:inline">Sign out</span>
+                  <span aria-hidden>🔒</span>
+                </button>
+              </form>
             </div>
-          </div>
-        </header>
+            </div>
+            </header>
+
 
         {/* KPI row — only show relevant, with hover list */}
         {kpiData && (
