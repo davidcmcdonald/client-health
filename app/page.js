@@ -225,24 +225,6 @@ function MonthPill({ label, color, note }) {
   ) : pill;
 }
 
-[color || "grey"];
-
-  const pill = (
-    <span
-      className={cn("px-2.5 py-1 rounded-full text-xs font-medium", styles)}
-      {...(note ? { title: note } : {})} // mobile fallback tooltip
-    >
-      {label}
-    </span>
-  );
-
-  return note ? (
-    <Tooltip content={<div className="text-xs leading-snug whitespace-pre-wrap">{note}</div>}>
-      {pill}
-    </Tooltip>
-  ) : pill;
-}
-
 function StatusChip({status}){
   const map={
     "no content organised or needed":{cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",label:"No content"},
@@ -675,7 +657,7 @@ export default function Page(){
                     </div>
                   </div>
 
-                  {/* comms + LQR */}}
+                  {/* comms + LQR */}
                   <div className="mt-4 flex items-center gap-2 text-sm flex-wrap">
                     <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", commsPill.cls)}>{commsPill.label}</span>
                     <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", lastLQR.cls)}>{lastLQR.label}</span>
