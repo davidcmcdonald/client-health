@@ -201,16 +201,28 @@ function Tooltip({children,content,width="w-80"}){
 }
 
 function MonthPill({ label, color, note }) {
-  const styles = {
+  const stylesMap = {
     green: "bg-emerald-500 text-white",
     yellow: "bg-yellow-400 text-zinc-900",
     red:   "bg-rose-500 text-white",
     grey:  "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
-  }
+  };
+  const styles = stylesMap[color || "grey"];
 
-      </div>
-    </div>
+  const pill = (
+    <span
+      className={cn("px-2.5 py-1 rounded-full text-xs font-medium", styles)}
+      {...(note ? { title: note } : {})}
+    >
+      {label}
+    </span>
   );
+
+  return note ? (
+    <Tooltip content={<div className="text-xs leading-snug whitespace-pre-wrap">{note}</div>}>
+      {pill}
+    </Tooltip>
+  ) : pill;
 }
 
 [color || "grey"];
