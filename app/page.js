@@ -25,7 +25,7 @@ const STATUS_LABELS = [
 ];
 
 /* ---------------- tiny utils ---------------- */
-function cn(...a){return a.filter(Boolean).join(" ");}
+function cn(...a){ return a.filter(Boolean).join(" "); }
 
 function dateFromSheet(v){
   if (!v) return null;
@@ -50,7 +50,6 @@ function dateFromSheet(v){
   return null;
 }
 
-
 function fmt(d){
   return d ? d.toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"}) : "—";
 }
@@ -71,35 +70,43 @@ function daysSince(d){
   return Number.isNaN(ms)?null:Math.max(0,Math.floor(ms/86400000));
 }
 
+// Handle numeric or yes/no for scope values
+function numOrBool(v){
+  if (v == null) return 0;
+  const s = String(v).trim().toLowerCase();
+  if (s === "yes" || s === "true" || s === "y") return 1;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
 /* LQR pill: green ≤3mo, orange =4mo, red ≥5mo, grey missing */
 function lqrStatus(date){
   const m=monthsBetween(date,new Date());
   if(m==null) return {label:"LQR —", cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300"};
-  if(m<=3) return {label:`LQR ${fmt(date)}`, cls:"bg-emerald-500 text-white"};
-  if(m===4) return {label:`LQR ${fmt(date)}`, cls:"bg-orange-500 text-white"};
-  return {label:`LQR ${fmt(date)}`, cls:"bg-rose-500 text-white"};
+  if(m<=3)   return {label:`LQR ${fmt(date)}`, cls:"bg-emerald-500 text-white"};
+  if(m===4)  return {label:`LQR ${fmt(date)}`, cls:"bg-orange-500 text-white"};
+  return       {label:`LQR ${fmt(date)}`, cls:"bg-rose-500 text-white"};
 }
 
-/* Last Comms pill (uses exact icons, ≤7d green, >7d red, missing grey) */
+/* Comms pill (≤7d green, >7d red, missing grey) */
 function commsRecency(date, type) {
   const icon = COMMS_ICON[type] ?? "🗒️";
   const d = daysSince(date);
   if (d == null) {
-    return { label: `${icon} Last Comms —`, cls: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300" };
+    return { label: `${icon} Comms —`, cls: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300" };
   }
   return d <= 7
-    ? { label: `${icon} Last Comms ${d}d`, cls: "bg-emerald-500 text-white" }
-    : { label: `${icon} Last Comms ${d}d`, cls: "bg-rose-500 text-white" };
+    ? { label: `${icon} Comms ${d}d`, cls: "bg-emerald-500 text-white" }
+    : { label: `${icon} Comms ${d}d`, cls: "bg-rose-500 text-white" };
 }
-
 
 /* Ad Report pill (monthly cadence: ≤31d green, 32–45d orange, >45d red, missing grey) */
 function adReportStatus(date){
   const d = daysSince(date);
   if(d==null) return { label: "AdRpt —", cls: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300" };
-  if(d<=31) return { label: `AdRpt ${fmt(date)}`, cls: "bg-emerald-500 text-white" };
-  if(d<=45) return { label: `AdRpt ${fmt(date)}`, cls: "bg-orange-500 text-white" };
-  return { label: `AdRpt ${fmt(date)}`, cls: "bg-rose-500 text-white" };
+  if(d<=31)   return { label: `AdRpt ${fmt(date)}`, cls: "bg-emerald-500 text-white" };
+  if(d<=45)   return { label: `AdRpt ${fmt(date)}`, cls: "bg-orange-500 text-white" };
+  return        { label: `AdRpt ${fmt(date)}`, cls: "bg-rose-500 text-white" };
 }
 
 /* ---------------- Monthly helpers ---------------- */
@@ -114,25 +121,24 @@ function toMonthIndex(m){
   return null;
 }
 
+// Map sheet values to sent/incomplete/overdue with friendlier synonyms
 function normalizeMonthState(s){
   const raw = String(s || "").trim().toLowerCase();
-  // New three statuses
-  if (raw === "sent") return "sent";
-  if (raw === "incomplete") return "incomplete";
-  if (raw === "overdue") return "overdue";
-  // Legacy synonyms → map to closest
-  if (["delivered","complete and sent","green"].includes(raw)) return "sent";
-  if (["not sent","planned","plan","p","done","complete","completed","yellow"].includes(raw)) return "incomplete";
-  if (["late","red"].includes(raw)) return "overdue";
+  // Sent (green)
+  if (["done","complete","completed","delivered","complete and sent","sent","green"].includes(raw)) return "sent";
+  // Incomplete (orange)
+  if (["not sent","planned","plan","p","in progress","yellow","incomplete"].includes(raw)) return "incomplete";
+  // Overdue (red)
+  if (["late","overdue","red"].includes(raw)) return "overdue";
   return null; // anything else = no entry ⇒ grey
 }
 
 function monthPillColor(state) {
   switch (String(state || "").toLowerCase()) {
-    case "sent": return "green";
+    case "sent":       return "green";
     case "incomplete": return "yellow";
-    case "overdue": return "red";
-    default: return "grey";
+    case "overdue":    return "red";
+    default:           return "grey";
   }
 }
 
@@ -322,10 +328,10 @@ export default function Page(){
         mapRows(eData.columns,eData.rows)
           .filter(o=>Object.values(o).some(v=>v!=null && String(v).trim()!==""))
           .map(o=>{
-            const _date=dateFromSheet(o.Date);
-            const _slugs=String(o.Clients||"").split(/[,\s]+/).map(s=>normalizeSlug(s)).filter(Boolean);
-            const _statusDefault=normalizeStatus(o.Status);
-            const _statusByClient=parseClientStatuses(o["Client Statuses"]||"");
+            const _date = dateFromSheet(o.Date);
+            const _slugs = splitNames(o.Clients).map(s=>normalizeSlug(s)).filter(Boolean);
+            const _statusDefault = normalizeStatus(o.Status);
+            const _statusByClient = parseClientStatuses(o["Client Statuses"]||"");
             return {...o,_date,_slugs,_statusDefault,_statusByClient};
           })
           .filter(o=>o._date)
@@ -479,7 +485,7 @@ export default function Page(){
   }
 
   return (
-    <main className="min-h-screen relative overflow-hidden">
+    <main className="min-h-screen relative">
       {/* soft gradient bg */}
       <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60%_50%_at_10%_0%,rgba(16,185,129,0.12),transparent_60%),radial-gradient(50%_50%_at_100%_0%,rgba(59,130,246,0.10),transparent_50%),linear-gradient(to_bottom,#fafafa,transparent_30%)] dark:bg-[radial-gradient(60%_50%_at_10%_0%,rgba(16,185,129,0.12),transparent_60%),radial-gradient(50%_50%_at_100%_0%,rgba(59,130,246,0.10),transparent_50%),linear-gradient(to_bottom,#0b0b0b,transparent_30%)]"></div>
 
@@ -538,7 +544,7 @@ export default function Page(){
             {kpiData.comms7.length>0 && (
               <Tooltip content={<ul className="text-sm list-disc pl-5">{kpiData.comms7.map((n,i)=><li key={i}>{n}</li>)}</ul>}>
                 <span className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 px-3 py-2 text-sm shadow-sm">
-                  <span className="font-semibold">{kpiData.comms7.length}</span> Comms &gt; 7 Days
+                  <span className="font-semibold">{kpiData.comms7.length}</span> Comms &gt; 7d
                 </span>
               </Tooltip>
             )}
@@ -572,38 +578,27 @@ export default function Page(){
               const slug=normalizeSlug(c.Slug);
               const website = c.Link || c.Website || null;
 
-              // Team (sheet) with fallback to Clients names
-              const teamLeads = (leadsBySlug[slug] || []);
-              const teamAssists = (assistsBySlug[slug] || []);
-              const fallbackLeads = !teamLeads.length ? splitNames(c["Client Lead"]).map(n => ({ Name:n })) : [];
-              const fallbackAssists = !teamAssists.length ? splitNames(c["Client Assist"]).map(n => ({ Name:n })) : [];
-
               const lastLQR=lqrStatus(dateFromSheet(c["Last Quarterly Review"]));
               const commsType=c["Last Comms Type"];
               const commsDate=dateFromSheet(c["Last Comms Date"]);
               const commsPill=commsRecency(commsDate, commsType);
 
-              
-            // ⬇️ Replace everything from here...
-            const adReportDate = dateFromSheet(
-              c["Last Ad Report"] ||
-              c["Ad Report Sent"] ||
-              c["Ads Report Sent"] ||
-              c["Last Ads Report"]
-            );
+              const adReportDate = dateFromSheet(
+                c["Last Ad Report"] ||
+                c["Ad Report Sent"] ||
+                c["Ads Report Sent"] ||
+                c["Last Ads Report"]
+              );
 
-            // Show if there’s a date OR Scope says they have ads
-            const hasAds = !!(
-              adReportDate ||
-              Number(scopeBySlug[slug]?.metaAds || 0) ||
-              Number(scopeBySlug[slug]?.googleAds || 0)
-            );
-
+              // Show if there’s a date OR Scope says they have ads (numbers or YES/NO)
+              const hasAds = !!(
+                adReportDate ||
+                numOrBool(scopeBySlug[slug]?.metaAds) ||
+                numOrBool(scopeBySlug[slug]?.googleAds)
+              );
 
               const adRptPill = hasAds ? adReportStatus(adReportDate) : null;
 
-
-              
               // Month pills for current year
               const monthsForYear = (monthDataBySlug[slug]?.[currentYear]) || {};
               const monthPills = MONTHS_SHORT.map((label, i) => {
@@ -691,17 +686,16 @@ export default function Page(){
                     </div>
                   </div>
 
-                  {/* comms + LQR */}
-                <div className="mt-4 flex items-center gap-2 text-sm flex-wrap">
-                  <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", commsPill.cls)}>{commsPill.label}</span>
-                  <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", lastLQR.cls)}>{lastLQR.label}</span>
-                  {adRptPill && (
-                    <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", adRptPill.cls)}>
-                      {adRptPill.label}
-                    </span>
-                  )}
-                </div>
-
+                  {/* comms + LQR + AdRpt */}
+                  <div className="mt-4 flex items-center gap-2 text-sm flex-wrap">
+                    <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", commsPill.cls)}>{commsPill.label}</span>
+                    <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", lastLQR.cls)}>{lastLQR.label}</span>
+                    {adRptPill && (
+                      <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", adRptPill.cls)}>
+                        {adRptPill.label}
+                      </span>
+                    )}
+                  </div>
 
                   {/* months */}
                   <div className="mt-4">
