@@ -6,15 +6,16 @@ export function middleware(req) {
 
   // Allow public assets and the unlock endpoints through
   if (
-    pathname.startsWith("/_next") ||
-    pathname === "/favicon.ico" ||
-    pathname.startsWith("/unlock") ||
-    pathname.startsWith("/api/unlock") ||
-+   pathname.startsWith("/api/logout") ||
-    pathname.startsWith("/logos")
-  ) {
-    return NextResponse.next();
-  }
+  pathname.startsWith("/_next") ||
+  pathname === "/favicon.ico" ||
+  pathname.startsWith("/logos") ||
+  pathname.startsWith("/unlock") ||
+  pathname.startsWith("/api/unlock") ||
+  pathname.startsWith("/api/logout")
+) {
+  return NextResponse.next();
+}
+
 
 
   // Check cookie
