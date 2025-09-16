@@ -25,7 +25,8 @@ export default function Unlock({ searchParams }) {
           placeholder="Team passcode"
           autoFocus
           autoComplete="current-password"
-          className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 outline-none focus:ring-2 focus:ring-emerald-500"
+          className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 outline-none
+                     focus:ring-2 focus:ring-[#fcba01] focus:border-[#fcba01]"
         />
 
         {error === "bad" && (
@@ -45,7 +46,7 @@ export default function Unlock({ searchParams }) {
         </button>
 
         <p className="text-xs text-zinc-500">
-          Access is remembered for 30 days on this device. Contact david@vitomedia.com.au for access
+          Access is remembered for 30 days on this device.
         </p>
       </form>
     </main>
