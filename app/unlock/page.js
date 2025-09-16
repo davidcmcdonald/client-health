@@ -13,7 +13,7 @@ export default function Unlock({ searchParams }) {
       <form
         method="POST"
         action="/api/unlock"
-        className="w-full max-w-sm space-y-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/70 p-6 shadow-sm"
+        className="w-full max-w-sm space-y-4 rounded-2xl border border-[#fcba01] bg-white/80 dark:bg-zinc-900/70 p-6 shadow-sm"
       >
         <h1 className="text-lg font-semibold">Enter Passcode</h1>
 
@@ -39,13 +39,13 @@ export default function Unlock({ searchParams }) {
 
         <button
           type="submit"
-          className="w-full rounded-xl bg-emerald-600 text-white py-2.5 text-sm font-medium hover:bg-emerald-700"
+          className="w-full rounded-xl bg-[#fcba01] text-zinc-900 py-2.5 text-sm font-medium hover:bg-[#e0a700]"
         >
           Unlock
         </button>
 
         <p className="text-xs text-zinc-500">
-          Access is remembered for 30 days on this device.
+          Access is remembered for 30 days on this device. Contact david@vitomedia.com.au for access
         </p>
       </form>
     </main>
