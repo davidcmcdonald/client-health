@@ -512,26 +512,41 @@ export default function Page(){
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              <div className="w-40 md:w-72 relative">
-                <input
-                  value={q} onChange={e=>setQ(e.target.value)} placeholder="Search clients…"
-                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-3 py-2.5 shadow-sm outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400">🔎</span>
-              </div>
-
-              {mounted && (
-                <button
-                  onClick={toggle}
-                  className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-sm shadow-sm hover:shadow"
-                  title="Toggle light/dark"
-                >
-                  <span className="hidden sm:inline">Theme</span>
-                  <span className="text-lg">🌓</span>
-                </button>
-              )}
+          <div className="flex items-center gap-3">
+            <div className="w-40 md:w-72 relative">
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search clients…"
+                className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-3 py-2.5 shadow-sm outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400">🔎</span>
             </div>
+
+            {mounted && (
+              <button
+                onClick={toggle}
+                className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-sm shadow-sm hover:shadow"
+                title="Toggle light/dark"
+              >
+                <span className="hidden sm:inline">Theme</span>
+                <span className="text-lg">🌓</span>
+              </button>
+            )}
+
+            {/* Logout */}
+            <form method="POST" action="/api/unlock?logout=1">
+              <button
+                type="submit"
+                className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-sm shadow-sm hover:shadow"
+                title="Lock this device"
+              >
+                <span className="hidden sm:inline">Logout</span>
+                <span className="text-lg">🔒</span>
+              </button>
+            </form>
+          </div>
+
           </div>
         </header>
 
