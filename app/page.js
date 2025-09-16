@@ -73,6 +73,13 @@ function daysSince(d){
   return Number.isNaN(ms)?null:Math.max(0,Math.floor(ms/86400000));
 }
 
+function csvToList(s){
+  return String(s || "")
+    .split(",")
+    .map(x => x.trim())
+    .filter(Boolean);
+}
+
 /* LQR pill: label uses day+month (no year). green ≤3mo, orange =4mo, red ≥5mo, grey missing */
 function lqrStatus(date){
   const m=monthsBetween(date,new Date());
@@ -222,11 +229,20 @@ function useTheme(){
 }
 
 /* ---------------- UI atoms ---------------- */
-function Tooltip({children,content,width="w-80"}){
+function Tooltip({ children, content, width = "w-80" }) {
   return (
-    <span className="relative group inline-block">
+    <span
+      className="relative group inline-flex focus:outline-none"
+      tabIndex={0} /* enables keyboard/touch focus to show tooltip */
+    >
       {children}
-      <span className={cn("pointer-events-none absolute left-0 top-[120%] z-30 hidden", width, "group-hover:block")}>
+      <span
+        className={cn(
+          "pointer-events-none absolute left-0 top-[120%] z-50 hidden",
+          "group-hover:block group-focus-within:block",
+          width
+        )}
+      >
         <span className="block rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 shadow-xl">
           {content}
         </span>
@@ -512,41 +528,40 @@ export default function Page(){
               </div>
             </div>
 
-          <div className="flex items-center gap-3">
-            <div className="w-40 md:w-72 relative">
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search clients…"
-                className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-3 py-2.5 shadow-sm outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400">🔎</span>
+            <div className="flex items-center gap-3">
+              <div className="w-40 md:w-72 relative">
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Search clients…"
+                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-3 py-2.5 shadow-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400">🔎</span>
+              </div>
+
+              {mounted && (
+                <button
+                  onClick={toggle}
+                  className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-sm shadow-sm hover:shadow"
+                  title="Toggle light/dark"
+                >
+                  <span className="hidden sm:inline">Theme</span>
+                  <span className="text-lg">🌓</span>
+                </button>
+              )}
+
+              {/* Logout */}
+              <form method="POST" action="/api/unlock?logout=1">
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-sm shadow-sm hover:shadow"
+                  title="Lock this device"
+                >
+                  <span className="hidden sm:inline">Logout</span>
+                  <span className="text-lg">🔒</span>
+                </button>
+              </form>
             </div>
-
-            {mounted && (
-              <button
-                onClick={toggle}
-                className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-sm shadow-sm hover:shadow"
-                title="Toggle light/dark"
-              >
-                <span className="hidden sm:inline">Theme</span>
-                <span className="text-lg">🌓</span>
-              </button>
-            )}
-
-            {/* Logout */}
-            <form method="POST" action="/api/unlock?logout=1">
-              <button
-                type="submit"
-                className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-sm shadow-sm hover:shadow"
-                title="Lock this device"
-              >
-                <span className="hidden sm:inline">Logout</span>
-                <span className="text-lg">🔒</span>
-              </button>
-            </form>
-          </div>
-
           </div>
         </header>
 
@@ -604,16 +619,11 @@ export default function Page(){
               const slug=normalizeSlug(c.Slug);
               const website = c.Link || c.Website || null;
 
-              // Team (sheet) with fallback to Clients names
-              const teamLeads = (leadsBySlug[slug] || []);
-              const teamAssists = (assistsBySlug[slug] || []);
-              const fallbackLeads = !teamLeads.length ? splitNames(c["Client Lead"]).map(n => ({ Name:n })) : [];
-              const fallbackAssists = !teamAssists.length ? splitNames(c["Client Assist"]).map(n => ({ Name:n })) : [];
-
               const lastLQR=lqrStatus(dateFromSheet(c["Last Quarterly Review"]));
               const commsType=c["Last Comms Type"];
               const commsDate=dateFromSheet(c["Last Comms Date"]);
               const commsPill=commsRecency(commsDate, commsType);
+              const lqrNotesArr = csvToList(c["LQR Notes"]);
 
               // Ads: pull both report date and ad refresh (new field variants supported)
               const adReportDate = dateFromSheet(
@@ -682,7 +692,7 @@ export default function Page(){
               );
 
               return (
-                <div key={idx} className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/85 dark:bg-zinc-900/70 p-5 shadow-sm hover:shadow-md transition">
+                <div key={slug || idx} className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/85 dark:bg-zinc-900/70 p-5 shadow-sm hover:shadow-md transition">
                   {/* top */}
                   <div className="flex items-center gap-4">
                     <Tooltip content={hoverContent}>
@@ -726,38 +736,45 @@ export default function Page(){
 
                   {/* comms + LQR + Ads */}
                   <div className="mt-4 flex items-center gap-2 text-sm flex-wrap">
-                    {/* Comms with hover */}
+                    {/* Comms (icon + days only) */}
+                    <Tooltip content={<div className="text-xs leading-snug whitespace-pre-wrap">{commsPill.note}</div>}>
+                      <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", commsPill.cls)}>
+                        {commsPill.label}
+                      </span>
+                    </Tooltip>
+
+                    {/* LQR (with hover if notes exist) */}
                     {(() => {
                       const chip = (
-                        <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", commsPill.cls)}>
-                          {commsPill.label}
+                        <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", lastLQR.cls)}>
+                          {lastLQR.label}
                         </span>
                       );
-                      return commsPill.note ? (
-                        <Tooltip content={<div className="text-xs whitespace-pre-wrap leading-snug">{commsPill.note}</div>}>
+                      if (!lqrNotesArr.length) return chip;
+                      return (
+                        <Tooltip
+                          content={
+                            <div className="text-xs leading-snug">
+                              <div className="text-zinc-500 mb-1">LQR notes</div>
+                              <ul className="list-disc pl-4 space-y-1">
+                                {lqrNotesArr.map((t, i) => <li key={i}>{t}</li>)}
+                              </ul>
+                            </div>
+                          }
+                        >
                           {chip}
                         </Tooltip>
-                      ) : chip;
+                      );
                     })()}
 
-                    {/* LQR (no year in label now) */}
-                    <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", lastLQR.cls)}>
-                      {lastLQR.label}
-                    </span>
-
-                    {/* Ads with hover */}
-                    {adRptPill && (() => {
-                      const chip = (
+                    {/* Ads (only if client has ads) */}
+                    {adRptPill && (
+                      <Tooltip content={<div className="text-xs leading-snug whitespace-pre-wrap">{adRptPill.note}</div>}>
                         <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", adRptPill.cls)}>
                           {adRptPill.label}
                         </span>
-                      );
-                      return adRptPill.note ? (
-                        <Tooltip content={<div className="text-xs whitespace-pre-wrap leading-snug">{adRptPill.note}</div>}>
-                          {chip}
-                        </Tooltip>
-                      ) : chip;
-                    })()}
+                      </Tooltip>
+                    )}
                   </div>
 
                   {/* months */}
