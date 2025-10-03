@@ -29,22 +29,36 @@ function cn(...a){return a.filter(Boolean).join(" ");}
 
 function dateFromSheet(v){
   if (!v) return null;
-
-  // Already a Date?
   if (v instanceof Date && !Number.isNaN(v.getTime())) return v;
 
   const s = String(v).trim();
 
-  // Try native (works for ISO like 2025-09-15)
+  // Try native (works for ISO like 2025-09-15 and often "Mar 2025")
   const iso = new Date(s);
   if (!Number.isNaN(iso.getTime())) return iso;
 
   // Fallback: dd/mm/yyyy or dd-mm-yyyy
-  const m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
-  if (m) {
-    const [, d, mo, y] = m;
-    const Y = y.length === 2 ? Number(`20${y}`) : Number(y);
-    return new Date(Y, Number(mo) - 1, Number(d));
+  {
+    const m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+    if (m) {
+      const [, d, mo, y] = m;
+      const Y = y.length === 2 ? Number(`20${y}`) : Number(y);
+      return new Date(Y, Number(mo) - 1, Number(d));
+    }
+  }
+
+  // Fallback: "Mon 2025" / "March 2025" / "Mar-25"
+  {
+    const m2 = s.match(/^([A-Za-z]{3,})[ -]?(\d{2,4})$/);
+    if (m2) {
+      const [, mon, yy] = m2;
+      const long=["january","february","march","april","may","june","july","august","september","october","november","december"];
+      const mi = long.indexOf(mon.toLowerCase());
+      if (mi !== -1) {
+        const Y = yy.length === 2 ? Number(`20${yy}`) : Number(yy);
+        return new Date(Y, mi, 1);
+      }
+    }
   }
 
   return null;
@@ -92,13 +106,13 @@ function startOfTodayBrisbane(){
   return new Date(n.getFullYear(), n.getMonth(), n.getDate());
 }
 
-/* LQR pill: label uses day+month (no year). green ≤3mo, orange =4mo, red ≥5mo, grey missing */
+/* LQR pill: label uses day+month (no year). green ≤3mo, yellow =4mo, red ≥5mo, grey missing */
 function lqrStatus(date){
   const m=monthsBetween(date,new Date());
   if(m==null) return {label:"LQR —", cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300"};
   const base=`LQR ${fmtDM(date)}`;
   if(m<=3) return {label:base, cls:"bg-emerald-500 text-white"};
-  if(m===4) return {label:base, cls:"bg-orange-500 text-white"}; // stays orange at 4 months (explained under Needs Attention)
+  if(m===4) return {label:base, cls:"bg-yellow-400 text-zinc-900"}; // 4 months = yellow (warning)
   return {label:base, cls:"bg-rose-500 text-white"};
 }
 
@@ -129,7 +143,7 @@ function adReportStatus(reportDate, refreshDate){
   let cls = "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300"; // missing
   if (d != null) {
     if (d <= 31) cls = "bg-emerald-500 text-white";
-    else if (d <= 45) cls = "bg-orange-500 text-white";
+    else if (d <= 45) cls = "bg-yellow-400 text-zinc-900"; // align warning tone
     else cls = "bg-rose-500 text-white";
   }
   const note =
@@ -245,7 +259,7 @@ function Tooltip({ children, content, width = "w-80" }) {
   return (
     <span
       className="relative group inline-flex focus:outline-none"
-      tabIndex={0} /* enables keyboard/touch focus to show tooltip */
+      tabIndex={0}
     >
       {children}
       <span
@@ -481,6 +495,26 @@ export default function Page(){
     return out;
   }, [monthly]);
 
+  // Inferred client "start" date per slug from Monthly rows (first ever month present)
+  const inferredStartBySlug = useMemo(()=>{
+    if(!monthly) return {};
+    const best = {};
+    for(const row of monthly){
+      const slug = normalizeSlug(row.Slug ?? row.slug);
+      const year = Number(row.Year ?? row.year);
+      const mIdx = toMonthIndex(row.Month ?? row.month);
+      if(!slug || !Number.isFinite(year) || mIdx==null) continue;
+      const key = `${year}-${String(mIdx).padStart(2,"0")}`;
+      const prev = best[slug]?.key;
+      if (!prev || key < prev) {
+        best[slug] = { key, date: new Date(year, mIdx, 1) };
+      }
+    }
+    const out={};
+    for(const [slug,val] of Object.entries(best)) out[slug]=val.date;
+    return out;
+  },[monthly]);
+
   // Events grouped by slug
   const eventsBySlug=useMemo(()=>{
     if(!events) return {};
@@ -510,11 +544,11 @@ export default function Page(){
       const name = c.Client || c.Slug || "—";
       const lastLQR = dateFromSheet(c["Last Quarterly Review"]);
       const m = monthsBetween(lastLQR, new Date());
-      if(m===4) dueSoon.push(name);          // orange month
+      if(m===4) dueSoon.push(name);          // 4-month LQR = yellow warning
       else if(m>=5) overdue.push(name);      // red
 
       const d = daysSince(dateFromSheet(c["Last Comms Date"]));
-      if(d!=null && d>7) touch7.push(name);  // rename KPI label to Touch Points > 7 Days
+      if(d!=null && d>7) touch7.push(name);  // renamed KPI label below
     }
     return { dueSoon, overdue, touch7 };
   },[clients]);
@@ -526,9 +560,9 @@ export default function Page(){
         <div className="text-xs leading-snug">
           <div className="font-semibold mb-1">Complete (green)</div>
           <ul className="list-disc pl-4 space-y-1">
-            <li>Monthly target met for this period.</li>
-            <li>Touch Point within ≤ 7 days.</li>
-            <li>LQR within ≤ 3 months.</li>
+            <li>Monthly target met for this period</li>
+            <li>Touch Point within ≤ 7 days</li>
+            <li>LQR within ≤ 3 months</li>
           </ul>
         </div>
       ),
@@ -536,9 +570,9 @@ export default function Page(){
         <div className="text-xs leading-snug">
           <div className="font-semibold mb-1">Needs Attention (yellow)</div>
           <ul className="list-disc pl-4 space-y-1">
-            <li>Used for warning windows across the board.</li>
-            <li><strong>LQR:</strong> Month 4 shows as orange (still a warning) — included under “Needs Attention”.</li>
-            <li><strong>Touch Points cadence:</strong> Aim weekly. If you’re approaching 7 days without a Touch Point, plan one.</li>
+            <li>Warning windows across the board</li>
+            <li><strong>LQR:</strong> month 4 shows as yellow (warning)</li>
+            <li><strong>Touch Points cadence:</strong> aim weekly; if you’re approaching 7 days, schedule one</li>
           </ul>
         </div>
       ),
@@ -546,18 +580,18 @@ export default function Page(){
         <div className="text-xs leading-snug">
           <div className="font-semibold mb-1">Overdue (red)</div>
           <ul className="list-disc pl-4 space-y-1">
-            <li>LQR ≥ 5 months ago.</li>
-            <li>Touch Point &gt; 7 days ago.</li>
-            <li>Monthly target missed for the period.</li>
+            <li>LQR ≥ 5 months ago</li>
+            <li>Touch Point &gt; 7 days ago</li>
+            <li>Monthly target missed for the period</li>
           </ul>
         </div>
       ),
       other: (
         <div className="text-xs leading-snug">
-          <div className="font-semibold mb-1">Other / Not Applicable</div>
+          <div className="font-semibold mb-1">Other/NA (pause etc)</div>
           <ul className="list-disc pl-4 space-y-1">
-            <li>Months before a client started will show a “–” dash.</li>
-            <li>Paused/seasonal/NA also appear neutral.</li>
+            <li>Months before a client started will show a “–” dash</li>
+            <li>Paused/seasonal/NA appear neutral</li>
           </ul>
         </div>
       )
@@ -579,12 +613,14 @@ export default function Page(){
     return {upcomingEvents: up, pastEvents: pa};
   },[events]);
 
-  // Helper: infer client start date from likely fields
+  // Helper: infer client start date from common fields
   function clientStartDate(row){
     return (
       dateFromSheet(row["Start Date"]) ||
       dateFromSheet(row["Onboarded"]) ||
       dateFromSheet(row["Onboarding Date"]) ||
+      dateFromSheet(row["Client Start"]) ||
+      dateFromSheet(row["Client Since"]) ||
       dateFromSheet(row["Start"]) ||
       null
     );
@@ -680,7 +716,7 @@ export default function Page(){
           </section>
         )}
 
-        {/* Legend — Complete (green), Needs Attention (yellow), Overdue (red), Other/NA */}
+        {/* Legend — Complete (green), Needs Attention (yellow), Overdue (red), Other/NA (pause etc) */}
         <section className="mt-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 p-4">
           <div className="text-xs font-medium mb-2 text-zinc-600 dark:text-zinc-300">Legend</div>
           <div className="flex flex-wrap gap-4 text-xs">
@@ -701,7 +737,7 @@ export default function Page(){
             </Tooltip>
             <Tooltip content={legendExplainers.other}>
               <span className="inline-flex items-center gap-2 cursor-help">
-                <span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>Other/NA
+                <span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>Other/NA (pause etc)
               </span>
             </Tooltip>
           </div>
@@ -724,7 +760,7 @@ export default function Page(){
               const website = c.Link || c.Website || null;
 
               const lastLQR=lqrStatus(dateFromSheet(c["Last Quarterly Review"]));
-              const touchType=c["Last Comms Type"];        // source fields unchanged
+              const touchType=c["Last Comms Type"];        // using same source fields
               const touchDate=dateFromSheet(c["Last Comms Date"]);
               const touchPill=touchPointRecency(touchDate, touchType);
               const lqrNotesArr = csvToList(c["LQR Notes"]);
@@ -751,14 +787,16 @@ export default function Page(){
               );
               const adRptPill = hasAds ? adReportStatus(adReportDate, adRefreshDate) : null;
 
-              // Month pills for current year, with "dash" for pre-start months
-              const monthsForYearObj = (monthDataBySlug[slug]?.[currentYear]) || {};
-              const start = clientStartDate(c);
+              // Determine start (explicit client field OR inferred from Monthly rows)
+              const explicitStart = clientStartDate(c);
+              const inferredStart = inferredStartBySlug[slug] || null;
+              const start = explicitStart || inferredStart || null;
               const startYear = start?.getFullYear() ?? null;
               const startMonthIdx = start?.getMonth() ?? null;
 
+              // Month pills for current year, with "dash" for pre-start months
+              const monthsForYearObj = (monthDataBySlug[slug]?.[currentYear]) || {};
               const monthPills = MONTHS_SHORT.map((label, i) => {
-                // If client started this year and this month is before their start — show dash
                 const isDash = (startYear === currentYear) && (startMonthIdx != null) && (i < startMonthIdx);
                 if (isDash) {
                   return { label: "–", color: "grey", note: "Not applicable (client not yet onboarded this month)" };
@@ -979,13 +1017,13 @@ export default function Page(){
             )}
           </div>
 
-          {/* Major Past (collapsible) */}
+          {/* Archived (collapsible) */}
           <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/60 shadow-sm overflow-hidden">
             <button
               onClick={()=>setOpenPast(v=>!v)}
               className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/60 dark:hover:bg-zinc-900/40"
             >
-              <h2 className="text-xl font-semibold">Major Past Events, Holidays or Campaigns</h2>
+              <h2 className="text-xl font-semibold">Archived</h2>
               <span className="text-xs text-zinc-500">{openPast ? "Hide" : "Show"} {Array.isArray(pastEvents) ? `(${pastEvents.length})` : ""}</span>
             </button>
             {openPast && (
