@@ -80,33 +80,45 @@ function csvToList(s){
     .filter(Boolean);
 }
 
+/* Brisbane "today" for event cutover (QLD is UTC+10, no DST) */
+function nowInBrisbane(){
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset()*60000;
+  const offsetMs = 10*60*60*1000; // +10
+  return new Date(utc + offsetMs);
+}
+function startOfTodayBrisbane(){
+  const n = nowInBrisbane();
+  return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+}
+
 /* LQR pill: label uses day+month (no year). green ≤3mo, orange =4mo, red ≥5mo, grey missing */
 function lqrStatus(date){
   const m=monthsBetween(date,new Date());
   if(m==null) return {label:"LQR —", cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300"};
   const base=`LQR ${fmtDM(date)}`;
   if(m<=3) return {label:base, cls:"bg-emerald-500 text-white"};
-  if(m===4) return {label:base, cls:"bg-orange-500 text-white"};
+  if(m===4) return {label:base, cls:"bg-orange-500 text-white"}; // stays orange at 4 months (explained under Needs Attention)
   return {label:base, cls:"bg-rose-500 text-white"};
 }
 
-/* Comms pill: icon + days only; tooltip says method + full date */
-function commsRecency(date, type) {
+/* Touch Point pill (renamed from "comms"): icon + days; tooltip says method + full date */
+function touchPointRecency(date, type) {
   const icon = COMMS_ICON[type] ?? "🗒️";
   const d = daysSince(date);
   if (d == null) {
     return {
       label: `${icon} —`,
       cls: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
-      note: "No last communication date on file.",
+      note: "No Touch Point date on file.",
     };
   }
   const when = fmt(date);
   const by = type || "Unknown method";
   return {
     label: `${icon} ${d}d`,
-    cls: d <= 7 ? "bg-emerald-500 text-white" : "bg-rose-500 text-white",
-    note: `Last communication was by ${by} on ${when}.`,
+    cls: d <= 7 ? "bg-emerald-500 text-white" : "bg-rose-500 text-white", // unchanged cadence (<=7 green, >7 red)
+    note: `Last Touch Point was by ${by} on ${when}.`,
   };
 }
 
@@ -140,7 +152,7 @@ function toMonthIndex(m){
 
 function normalizeMonthState(s){
   const raw = String(s || "").trim().toLowerCase();
-  // New three statuses
+  // Three statuses
   if (raw === "sent") return "sent";
   if (raw === "incomplete") return "incomplete";
   if (raw === "overdue") return "overdue";
@@ -320,6 +332,11 @@ export default function Page(){
   const [scope,setScope]=useState(null);
   const [error,setError]=useState("");
   const [q,setQ]=useState("");
+
+  // Events collapsibles
+  const [openUpcoming, setOpenUpcoming] = useState(true);
+  const [openPast, setOpenPast] = useState(false);
+
   const { mounted, toggle } = useTheme();
   const SHEET_URL = process.env.NEXT_PUBLIC_SHEET_URL;
 
@@ -488,19 +505,90 @@ export default function Page(){
   // KPI chips (only show relevant, with hover list)
   const kpiData=useMemo(()=>{
     if(!clients) return null;
-    const dueSoon=[], overdue=[], comms7=[];
+    const dueSoon=[], overdue=[], touch7=[];
     for(const c of clients){
       const name = c.Client || c.Slug || "—";
       const lastLQR = dateFromSheet(c["Last Quarterly Review"]);
       const m = monthsBetween(lastLQR, new Date());
-      if(m===4) dueSoon.push(name);
-      else if(m>=5) overdue.push(name);
+      if(m===4) dueSoon.push(name);          // orange month
+      else if(m>=5) overdue.push(name);      // red
 
       const d = daysSince(dateFromSheet(c["Last Comms Date"]));
-      if(d!=null && d>7) comms7.push(name);
+      if(d!=null && d>7) touch7.push(name);  // rename KPI label to Touch Points > 7 Days
     }
-    return { dueSoon, overdue, comms7 };
+    return { dueSoon, overdue, touch7 };
   },[clients]);
+
+  // Legend hover content (explanations)
+  const legendExplainers = useMemo(()=>{
+    return {
+      complete: (
+        <div className="text-xs leading-snug">
+          <div className="font-semibold mb-1">Complete (green)</div>
+          <ul className="list-disc pl-4 space-y-1">
+            <li>Monthly target met for this period.</li>
+            <li>Touch Point within ≤ 7 days.</li>
+            <li>LQR within ≤ 3 months.</li>
+          </ul>
+        </div>
+      ),
+      needs: (
+        <div className="text-xs leading-snug">
+          <div className="font-semibold mb-1">Needs Attention (yellow)</div>
+          <ul className="list-disc pl-4 space-y-1">
+            <li>Used for warning windows across the board.</li>
+            <li><strong>LQR:</strong> Month 4 shows as orange (still a warning) — included under “Needs Attention”.</li>
+            <li><strong>Touch Points cadence:</strong> Aim weekly. If you’re approaching 7 days without a Touch Point, plan one.</li>
+          </ul>
+        </div>
+      ),
+      overdue: (
+        <div className="text-xs leading-snug">
+          <div className="font-semibold mb-1">Overdue (red)</div>
+          <ul className="list-disc pl-4 space-y-1">
+            <li>LQR ≥ 5 months ago.</li>
+            <li>Touch Point &gt; 7 days ago.</li>
+            <li>Monthly target missed for the period.</li>
+          </ul>
+        </div>
+      ),
+      other: (
+        <div className="text-xs leading-snug">
+          <div className="font-semibold mb-1">Other / Not Applicable</div>
+          <ul className="list-disc pl-4 space-y-1">
+            <li>Months before a client started will show a “–” dash.</li>
+            <li>Paused/seasonal/NA also appear neutral.</li>
+          </ul>
+        </div>
+      )
+    };
+  },[]);
+
+  // Events split & sort (Brisbane day cut)
+  const { upcomingEvents, pastEvents } = useMemo(()=>{
+    if(!events) return {upcomingEvents: null, pastEvents: null};
+    const cut = startOfTodayBrisbane();
+    const up = [];
+    const pa = [];
+    for(const e of events){
+      if(e._date < cut) pa.push(e);
+      else up.push(e);
+    }
+    up.sort((a,b)=>a._date-b._date);       // soonest first
+    pa.sort((a,b)=>b._date-a._date);       // most recent past first
+    return {upcomingEvents: up, pastEvents: pa};
+  },[events]);
+
+  // Helper: infer client start date from likely fields
+  function clientStartDate(row){
+    return (
+      dateFromSheet(row["Start Date"]) ||
+      dateFromSheet(row["Onboarded"]) ||
+      dateFromSheet(row["Onboarding Date"]) ||
+      dateFromSheet(row["Start"]) ||
+      null
+    );
+  }
 
   if(error){
     return (
@@ -582,24 +670,40 @@ export default function Page(){
                 </span>
               </Tooltip>
             )}
-            {kpiData.comms7.length>0 && (
-              <Tooltip content={<ul className="text-sm list-disc pl-5">{kpiData.comms7.map((n,i)=><li key={i}>{n}</li>)}</ul>}>
+            {kpiData.touch7.length>0 && (
+              <Tooltip content={<ul className="text-sm list-disc pl-5">{kpiData.touch7.map((n,i)=><li key={i}>{n}</li>)}</ul>}>
                 <span className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 px-3 py-2 text-sm shadow-sm">
-                  <span className="font-semibold">{kpiData.comms7.length}</span> Comms &gt; 7 Days
+                  <span className="font-semibold">{kpiData.touch7.length}</span> Touch Points &gt; 7 Days
                 </span>
               </Tooltip>
             )}
           </section>
         )}
 
-        {/* Legend — Sent (green), Incomplete (yellow), Overdue (red), Other (grey) */}
+        {/* Legend — Complete (green), Needs Attention (yellow), Overdue (red), Other/NA */}
         <section className="mt-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 p-4">
           <div className="text-xs font-medium mb-2 text-zinc-600 dark:text-zinc-300">Legend</div>
-          <div className="flex flex-wrap gap-3 text-xs">
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-emerald-500"></span>Sent</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-yellow-400"></span>Incomplete</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-rose-500"></span>Overdue</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>Other</span>
+          <div className="flex flex-wrap gap-4 text-xs">
+            <Tooltip content={legendExplainers.complete}>
+              <span className="inline-flex items-center gap-2 cursor-help">
+                <span className="h-3 w-3 rounded-full bg-emerald-500"></span>Complete
+              </span>
+            </Tooltip>
+            <Tooltip content={legendExplainers.needs}>
+              <span className="inline-flex items-center gap-2 cursor-help">
+                <span className="h-3 w-3 rounded-full bg-yellow-400"></span>Needs Attention
+              </span>
+            </Tooltip>
+            <Tooltip content={legendExplainers.overdue}>
+              <span className="inline-flex items-center gap-2 cursor-help">
+                <span className="h-3 w-3 rounded-full bg-rose-500"></span>Overdue
+              </span>
+            </Tooltip>
+            <Tooltip content={legendExplainers.other}>
+              <span className="inline-flex items-center gap-2 cursor-help">
+                <span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>Other/NA
+              </span>
+            </Tooltip>
           </div>
         </section>
 
@@ -620,9 +724,9 @@ export default function Page(){
               const website = c.Link || c.Website || null;
 
               const lastLQR=lqrStatus(dateFromSheet(c["Last Quarterly Review"]));
-              const commsType=c["Last Comms Type"];
-              const commsDate=dateFromSheet(c["Last Comms Date"]);
-              const commsPill=commsRecency(commsDate, commsType);
+              const touchType=c["Last Comms Type"];        // source fields unchanged
+              const touchDate=dateFromSheet(c["Last Comms Date"]);
+              const touchPill=touchPointRecency(touchDate, touchType);
               const lqrNotesArr = csvToList(c["LQR Notes"]);
 
               // Ads: pull both report date and ad refresh (new field variants supported)
@@ -647,18 +751,28 @@ export default function Page(){
               );
               const adRptPill = hasAds ? adReportStatus(adReportDate, adRefreshDate) : null;
 
-              // Month pills for current year
-              const monthsForYear = (monthDataBySlug[slug]?.[currentYear]) || {};
+              // Month pills for current year, with "dash" for pre-start months
+              const monthsForYearObj = (monthDataBySlug[slug]?.[currentYear]) || {};
+              const start = clientStartDate(c);
+              const startYear = start?.getFullYear() ?? null;
+              const startMonthIdx = start?.getMonth() ?? null;
+
               const monthPills = MONTHS_SHORT.map((label, i) => {
-                const entry = monthsForYear[i] || {};
+                // If client started this year and this month is before their start — show dash
+                const isDash = (startYear === currentYear) && (startMonthIdx != null) && (i < startMonthIdx);
+                if (isDash) {
+                  return { label: "–", color: "grey", note: "Not applicable (client not yet onboarded this month)" };
+                }
+                const entry = monthsForYearObj[i] || {};
                 const state = entry.state || null;
                 const note  = entry.note  || "";
                 const color = monthPillColor(state);
                 return { label, color, note };
               });
 
-              // Up to 3 upcoming items
-              const upcoming=(eventsBySlug[slug] || []).filter(e=>e._date>=new Date()).slice(0,3);
+              // Up to 3 upcoming items (Brisbane cut)
+              const cut = startOfTodayBrisbane();
+              const upcoming=(eventsBySlug[slug] || []).filter(e=>e._date>=cut).slice(0,3);
 
               const cc = contactsBySlug[slug];
               const sc = scopeBySlug[slug];
@@ -734,12 +848,12 @@ export default function Page(){
                     </div>
                   </div>
 
-                  {/* comms + LQR + Ads */}
+                  {/* Touch Point + LQR + Ads */}
                   <div className="mt-4 flex items-center gap-2 text-sm flex-wrap">
-                    {/* Comms (icon + days only) */}
-                    <Tooltip content={<div className="text-xs leading-snug whitespace-pre-wrap">{commsPill.note}</div>}>
-                      <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", commsPill.cls)}>
-                        {commsPill.label}
+                    {/* Touch Point (icon + days only) */}
+                    <Tooltip content={<div className="text-xs leading-snug whitespace-pre-wrap">{touchPill.note}</div>}>
+                      <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", touchPill.cls)}>
+                        {touchPill.label}
                       </span>
                     </Tooltip>
 
@@ -813,52 +927,114 @@ export default function Page(){
           </div>
         )}
 
-        {/* Events table */}
-        <section className="mt-10">
-          <h2 className="text-xl font-semibold mb-3">Major Upcoming Events, Holidays or Campaigns</h2>
-          {!events ? (
-            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/60 p-6 shadow-sm">Loading…</div>
-          ) : (
-            <div className="overflow-x-auto rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/85 dark:bg-zinc-900/70 shadow-sm">
-              <table className="min-w-full text-sm">
-                <thead className="bg-zinc-50 dark:bg-zinc-900/40">
-                  <tr className="text-left">
-                    <th className="px-4 py-3 font-semibold">Date</th>
-                    <th className="px-4 py-3 font-semibold">Title</th>
-                    <th className="px-4 py-3 font-semibold">Clients</th>
-                    <th className="px-4 py-3 font-semibold">Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {events.map((ev,i)=>(
-                    <tr key={i} className={i%2 ? "bg-white/60 dark:bg-zinc-900/30":""}>
-                      <td className="px-4 py-3 whitespace-nowrap">{fmt(ev._date)}</td>
-                      <td className="px-4 py-3 font-medium">{ev.Event || "—"}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-1">
-                          {ev._slugs.map((s,idx)=>{
-                            const st=ev._statusByClient[s] || ev._statusDefault || "no content organised or needed";
-                            return (
-                              <span key={idx} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-zinc-200 dark:border-zinc-800 text-xs bg-white dark:bg-zinc-950">
-                                {s} <StatusChip status={st}/>
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">{ev.Notes || ""}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        {/* Events boards */}
+        <section className="mt-10 space-y-6">
+          {/* Major Upcoming (collapsible) */}
+          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/60 shadow-sm overflow-hidden">
+            <button
+              onClick={()=>setOpenUpcoming(v=>!v)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/60 dark:hover:bg-zinc-900/40"
+            >
+              <h2 className="text-xl font-semibold">Major Upcoming Events, Holidays or Campaigns</h2>
+              <span className="text-xs text-zinc-500">{openUpcoming ? "Hide" : "Show"} {Array.isArray(upcomingEvents) ? `(${upcomingEvents.length})` : ""}</span>
+            </button>
+            {openUpcoming && (
+              !upcomingEvents ? (
+                <div className="p-6">Loading…</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-zinc-50 dark:bg-zinc-900/40">
+                      <tr className="text-left">
+                        <th className="px-4 py-3 font-semibold">Date</th>
+                        <th className="px-4 py-3 font-semibold">Title</th>
+                        <th className="px-4 py-3 font-semibold">Clients</th>
+                        <th className="px-4 py-3 font-semibold">Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {upcomingEvents.map((ev,i)=>(
+                        <tr key={i} className={i%2 ? "bg-white/60 dark:bg-zinc-900/30":""}>
+                          <td className="px-4 py-3 whitespace-nowrap">{fmt(ev._date)}</td>
+                          <td className="px-4 py-3 font-medium">{ev.Event || "—"}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              {ev._slugs.map((s,idx)=>{
+                                const st=ev._statusByClient[s] || ev._statusDefault || "no content organised or needed";
+                                return (
+                                  <span key={idx} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-zinc-200 dark:border-zinc-800 text-xs bg-white dark:bg-zinc-950">
+                                    {s} <StatusChip status={st}/>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">{ev.Notes || ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            )}
+          </div>
+
+          {/* Major Past (collapsible) */}
+          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/60 shadow-sm overflow-hidden">
+            <button
+              onClick={()=>setOpenPast(v=>!v)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/60 dark:hover:bg-zinc-900/40"
+            >
+              <h2 className="text-xl font-semibold">Major Past Events, Holidays or Campaigns</h2>
+              <span className="text-xs text-zinc-500">{openPast ? "Hide" : "Show"} {Array.isArray(pastEvents) ? `(${pastEvents.length})` : ""}</span>
+            </button>
+            {openPast && (
+              !pastEvents ? (
+                <div className="p-6">Loading…</div>
+              ) : pastEvents.length === 0 ? (
+                <div className="p-6 text-sm text-zinc-500">No past items.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-zinc-50 dark:bg-zinc-900/40">
+                      <tr className="text-left">
+                        <th className="px-4 py-3 font-semibold">Date</th>
+                        <th className="px-4 py-3 font-semibold">Title</th>
+                        <th className="px-4 py-3 font-semibold">Clients</th>
+                        <th className="px-4 py-3 font-semibold">Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pastEvents.map((ev,i)=>(
+                        <tr key={i} className={i%2 ? "bg-white/60 dark:bg-zinc-900/30":""}>
+                          <td className="px-4 py-3 whitespace-nowrap">{fmt(ev._date)}</td>
+                          <td className="px-4 py-3 font-medium">{ev.Event || "—"}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              {ev._slugs.map((s,idx)=>{
+                                const st=ev._statusByClient[s] || ev._statusDefault || "no content organised or needed";
+                                return (
+                                  <span key={idx} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-zinc-200 dark:border-zinc-800 text-xs bg-white dark:bg-zinc-950">
+                                    {s} <StatusChip status={st}/>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">{ev.Notes || ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            )}
+          </div>
         </section>
 
         {/* Footer with Google Sheet link */}
         <footer className="mt-8 text-xs text-zinc-500">
-          Last refreshed on page load. Update Google Sheets →
-          {" "}
+          Last refreshed on page load. Update Google Sheets →{" "}
           {SHEET_URL ? (
             <a className="text-emerald-600 dark:text-emerald-400 hover:underline" href={SHEET_URL} target="_blank" rel="noopener noreferrer">refresh here</a>
           ) : (
