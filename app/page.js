@@ -599,8 +599,8 @@ export default function Page(){
         <div className="text-xs leading-snug">
           <div className="font-semibold mb-1">Other/NA (pause etc)</div>
           <ul className="list-disc pl-4 space-y-1">
+            <li>Date Not Reached</li>
             <li>Months before a client started will show a “–” dash</li>
-            <li>Paused/seasonal/NA appear neutral</li>
           </ul>
         </div>
       )
@@ -746,7 +746,7 @@ export default function Page(){
             </Tooltip>
             <Tooltip content={legendExplainers.other}>
               <span className="inline-flex items-center gap-2 cursor-help">
-                <span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>Other/NA (pause etc)
+                <span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>Other/NA
               </span>
             </Tooltip>
           </div>
