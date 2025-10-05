@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState } from "react";
 
 /* ---------------- constants ---------------- */
 
-// Exact icon map (keys must match sheet values exactly)
 const COMMS_ICON = Object.freeze({
   Phone: "☎️",
   Email: "📧",
@@ -14,10 +13,8 @@ const COMMS_ICON = Object.freeze({
   "In Person": "🤝",
 });
 
-// Month labels for chips
 const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-// Event status labels (for the Events sheet)
 const STATUS_LABELS = [
   "no content organised or needed",
   "content planned",
@@ -29,22 +26,36 @@ function cn(...a){return a.filter(Boolean).join(" ");}
 
 function dateFromSheet(v){
   if (!v) return null;
-
-  // Already a Date?
   if (v instanceof Date && !Number.isNaN(v.getTime())) return v;
 
   const s = String(v).trim();
 
-  // Try native (works for ISO like 2025-09-15)
+  // Native parse (ISO or natural like "Mar 2025")
   const iso = new Date(s);
   if (!Number.isNaN(iso.getTime())) return iso;
 
-  // Fallback: dd/mm/yyyy or dd-mm-yyyy
-  const m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
-  if (m) {
-    const [, d, mo, y] = m;
-    const Y = y.length === 2 ? Number(`20${y}`) : Number(y);
-    return new Date(Y, Number(mo) - 1, Number(d));
+  // dd/mm/yyyy or dd-mm-yyyy
+  {
+    const m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+    if (m) {
+      const [, d, mo, y] = m;
+      const Y = y.length === 2 ? Number(`20${y}`) : Number(y);
+      return new Date(Y, Number(mo) - 1, Number(d));
+    }
+  }
+
+  // "March 2025" / "Mar-25"
+  {
+    const m2 = s.match(/^([A-Za-z]{3,})[ -]?(\d{2,4})$/);
+    if (m2) {
+      const [, mon, yy] = m2;
+      const long=["january","february","march","april","may","june","july","august","september","october","november","december"];
+      const mi = long.indexOf(mon.toLowerCase());
+      if (mi !== -1) {
+        const Y = yy.length === 2 ? Number(`20${yy}`) : Number(yy);
+        return new Date(Y, mi, 1);
+      }
+    }
   }
 
   return null;
@@ -80,25 +91,36 @@ function csvToList(s){
     .filter(Boolean);
 }
 
-/* LQR pill: label uses day+month (no year). green ≤3mo, orange =4mo, red ≥5mo, grey missing */
+/* Brisbane helpers (UTC+10, no DST) */
+function nowInBrisbane(){
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset()*60000;
+  const offsetMs = 10*60*60*1000;
+  return new Date(utc + offsetMs);
+}
+function startOfTodayBrisbane(){
+  const n = nowInBrisbane();
+  return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+}
+
+/* ---------------- status helpers ---------------- */
 function lqrStatus(date){
   const m=monthsBetween(date,new Date());
   if(m==null) return {label:"LQR —", cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300"};
   const base=`LQR ${fmtDM(date)}`;
   if(m<=3) return {label:base, cls:"bg-emerald-500 text-white"};
-  if(m===4) return {label:base, cls:"bg-orange-500 text-white"};
+  if(m===4) return {label:base, cls:"bg-yellow-400 text-zinc-900"}; // 4 months = yellow
   return {label:base, cls:"bg-rose-500 text-white"};
 }
 
-/* Comms pill: icon + days only; tooltip says method + full date */
-function commsRecency(date, type) {
+function touchPointRecency(date, type) {
   const icon = COMMS_ICON[type] ?? "🗒️";
   const d = daysSince(date);
   if (d == null) {
     return {
       label: `${icon} —`,
       cls: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
-      note: "No last communication date on file.",
+      note: "No Touch Point date on file.",
     };
   }
   const when = fmt(date);
@@ -106,18 +128,17 @@ function commsRecency(date, type) {
   return {
     label: `${icon} ${d}d`,
     cls: d <= 7 ? "bg-emerald-500 text-white" : "bg-rose-500 text-white",
-    note: `Last communication was by ${by} on ${when}.`,
+    note: `Last Touch Point was by ${by} on ${when}.`,
   };
 }
 
-/* Ads pill: label "Ads {day month}" (no year); tooltip shows last report + ad refresh */
 function adReportStatus(reportDate, refreshDate){
   const d = daysSince(reportDate);
   const baseLabel = reportDate ? `Ads ${fmtDM(reportDate)}` : "Ads —";
-  let cls = "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300"; // missing
+  let cls = "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300";
   if (d != null) {
     if (d <= 31) cls = "bg-emerald-500 text-white";
-    else if (d <= 45) cls = "bg-orange-500 text-white";
+    else if (d <= 45) cls = "bg-yellow-400 text-zinc-900";
     else cls = "bg-rose-500 text-white";
   }
   const note =
@@ -140,15 +161,13 @@ function toMonthIndex(m){
 
 function normalizeMonthState(s){
   const raw = String(s || "").trim().toLowerCase();
-  // New three statuses
   if (raw === "sent") return "sent";
   if (raw === "incomplete") return "incomplete";
   if (raw === "overdue") return "overdue";
-  // Legacy synonyms → map to closest
   if (["delivered","complete and sent","green"].includes(raw)) return "sent";
   if (["not sent","planned","plan","p","done","complete","completed","yellow"].includes(raw)) return "incomplete";
   if (["late","red"].includes(raw)) return "overdue";
-  return null; // anything else = no entry ⇒ grey
+  return null;
 }
 
 function monthPillColor(state) {
@@ -233,7 +252,7 @@ function Tooltip({ children, content, width = "w-80" }) {
   return (
     <span
       className="relative group inline-flex focus:outline-none"
-      tabIndex={0} /* enables keyboard/touch focus to show tooltip */
+      tabIndex={0}
     >
       {children}
       <span
@@ -254,6 +273,7 @@ function Tooltip({ children, content, width = "w-80" }) {
 function MonthPill({ label, color, note }) {
   const stylesMap = {
     green: "bg-emerald-500 text-white",
+    greenMuted: "bg-emerald-200 text-emerald-900 dark:bg-emerald-700/30 dark:text-emerald-200", // NEW pastel green
     yellow: "bg-yellow-400 text-zinc-900",
     red:   "bg-rose-500 text-white",
     grey:  "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
@@ -320,6 +340,10 @@ export default function Page(){
   const [scope,setScope]=useState(null);
   const [error,setError]=useState("");
   const [q,setQ]=useState("");
+
+  const [openUpcoming, setOpenUpcoming] = useState(true);
+  const [openPast, setOpenPast] = useState(false);
+
   const { mounted, toggle } = useTheme();
   const SHEET_URL = process.env.NEXT_PUBLIC_SHEET_URL;
 
@@ -376,7 +400,6 @@ export default function Page(){
     }catch(e){ setError(e.message); }
   })(); },[]);
 
-  // Team maps
   const teamByName=useMemo(()=>{
     const map={};
     (team||[]).forEach(p=>{
@@ -404,7 +427,6 @@ export default function Page(){
     }); return out;
   },[team]);
 
-  // Contacts map
   const contactsBySlug = useMemo(()=>{
     const m={}; (contacts||[]).forEach(r=>{
       const slug=normalizeSlug(r.Slug);
@@ -421,7 +443,6 @@ export default function Page(){
     }); return m;
   },[contacts]);
 
-  // Scope map
   const scopeBySlug = useMemo(()=>{
     const m={};
     (scope||[]).forEach(r=>{
@@ -441,8 +462,8 @@ export default function Page(){
     return m;
   },[scope]);
 
-  // Monthly: slug -> year -> monthIndex -> { state, note }
   const currentYear = new Date().getFullYear();
+
   const monthDataBySlug = useMemo(() => {
     const out = {};
     if (!monthly) return out;
@@ -464,7 +485,25 @@ export default function Page(){
     return out;
   }, [monthly]);
 
-  // Events grouped by slug
+  const inferredStartBySlug = useMemo(()=>{
+    if(!monthly) return {};
+    const best = {};
+    for(const row of monthly){
+      const slug = normalizeSlug(row.Slug ?? row.slug);
+      const year = Number(row.Year ?? row.year);
+      const mIdx = toMonthIndex(row.Month ?? row.month);
+      if(!slug || !Number.isFinite(year) || mIdx==null) continue;
+      const key = `${year}-${String(mIdx).padStart(2,"0")}`;
+      const prev = best[slug]?.key;
+      if (!prev || key < prev) {
+        best[slug] = { key, date: new Date(year, mIdx, 1) };
+      }
+    }
+    const out={};
+    for(const [slug,val] of Object.entries(best)) out[slug]=val.date;
+    return out;
+  },[monthly]);
+
   const eventsBySlug=useMemo(()=>{
     if(!events) return {};
     const m={};
@@ -472,7 +511,6 @@ export default function Page(){
     return m;
   },[events]);
 
-  // Search
   const filtered=useMemo(()=>{
     if(!clients) return null;
     if(!q) return clients;
@@ -485,10 +523,9 @@ export default function Page(){
     );
   },[clients,q]);
 
-  // KPI chips (only show relevant, with hover list)
   const kpiData=useMemo(()=>{
     if(!clients) return null;
-    const dueSoon=[], overdue=[], comms7=[];
+    const dueSoon=[], overdue=[], touch7=[];
     for(const c of clients){
       const name = c.Client || c.Slug || "—";
       const lastLQR = dateFromSheet(c["Last Quarterly Review"]);
@@ -497,10 +534,80 @@ export default function Page(){
       else if(m>=5) overdue.push(name);
 
       const d = daysSince(dateFromSheet(c["Last Comms Date"]));
-      if(d!=null && d>7) comms7.push(name);
+      if(d!=null && d>7) touch7.push(name);
     }
-    return { dueSoon, overdue, comms7 };
+    return { dueSoon, overdue, touch7 };
   },[clients]);
+
+  const legendExplainers = useMemo(()=>{
+    return {
+      complete: (
+        <div className="text-xs leading-snug">
+          <div className="font-semibold mb-1">Complete (green)</div>
+          <ul className="list-disc pl-4 space-y-1">
+            <li>Monthly target met for this period</li>
+            <li>Touch Point within ≤ 7 days</li>
+            <li>LQR within ≤ 3 months</li>
+          </ul>
+        </div>
+      ),
+      needs: (
+        <div className="text-xs leading-snug">
+          <div className="font-semibold mb-1">Needs Attention (yellow)</div>
+          <ul className="list-disc pl-4 space-y-1">
+            <li>Warning windows across the board</li>
+            <li><strong>LQR:</strong> month 4 shows as yellow (warning)</li>
+            <li><strong>Touch Points:</strong> aim weekly; if you’re approaching 7 days, schedule one</li>
+          </ul>
+        </div>
+      ),
+      overdue: (
+        <div className="text-xs leading-snug">
+          <div className="font-semibold mb-1">Overdue (red)</div>
+          <ul className="list-disc pl-4 space-y-1">
+            <li>LQR ≥ 5 months ago</li>
+            <li>Touch Point &gt; 7 days ago</li>
+            <li>Monthly target missed for the period</li>
+          </ul>
+        </div>
+      ),
+      other: (
+        <div className="text-xs leading-snug">
+          <div className="font-semibold mb-1">Other/NA (pause etc)</div>
+          <ul className="list-disc pl-4 space-y-1">
+            <li>Months before a client started show a “–” dash</li>
+            <li>Paused/seasonal/NA appear neutral</li>
+          </ul>
+        </div>
+      )
+    };
+  },[]);
+
+  const { upcomingEvents, pastEvents } = useMemo(()=>{
+    if(!events) return {upcomingEvents: null, pastEvents: null};
+    const cut = startOfTodayBrisbane();
+    const up = [];
+    const pa = [];
+    for(const e of events){
+      if(e._date < cut) pa.push(e);
+      else up.push(e);
+    }
+    up.sort((a,b)=>a._date-b._date);
+    pa.sort((a,b)=>b._date-a._date);
+    return {upcomingEvents: up, pastEvents: pa};
+  },[events]);
+
+  function clientStartDate(row){
+    return (
+      dateFromSheet(row["Start Date"]) ||
+      dateFromSheet(row["Onboarded"]) ||
+      dateFromSheet(row["Onboarding Date"]) ||
+      dateFromSheet(row["Client Start"]) ||
+      dateFromSheet(row["Client Since"]) ||
+      dateFromSheet(row["Start"]) ||
+      null
+    );
+  }
 
   if(error){
     return (
@@ -513,7 +620,6 @@ export default function Page(){
 
   return (
     <main className="min-h-screen relative overflow-hidden">
-      {/* soft gradient bg */}
       <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60%_50%_at_10%_0%,rgba(16,185,129,0.12),transparent_60%),radial-gradient(50%_50%_at_100%_0%,rgba(59,130,246,0.10),transparent_50%),linear-gradient(to_bottom,#fafafa,transparent_30%)] dark:bg-[radial-gradient(60%_50%_at_10%_0%,rgba(16,185,129,0.12),transparent_60%),radial-gradient(50%_50%_at_100%_0%,rgba(59,130,246,0.10),transparent_50%),linear-gradient(to_bottom,#0b0b0b,transparent_30%)]"></div>
 
       <div className="max-w-7xl mx-auto p-6 text-zinc-900 dark:text-zinc-100">
@@ -550,7 +656,6 @@ export default function Page(){
                 </button>
               )}
 
-              {/* Logout */}
               <form method="POST" action="/api/unlock?logout=1">
                 <button
                   type="submit"
@@ -565,7 +670,7 @@ export default function Page(){
           </div>
         </header>
 
-        {/* KPI row — only show relevant, with hover list */}
+        {/* KPI Row */}
         {kpiData && (
           <section className="mt-6 flex flex-wrap gap-3">
             {kpiData.dueSoon.length>0 && (
@@ -582,24 +687,40 @@ export default function Page(){
                 </span>
               </Tooltip>
             )}
-            {kpiData.comms7.length>0 && (
-              <Tooltip content={<ul className="text-sm list-disc pl-5">{kpiData.comms7.map((n,i)=><li key={i}>{n}</li>)}</ul>}>
+            {kpiData.touch7.length>0 && (
+              <Tooltip content={<ul className="text-sm list-disc pl-5">{kpiData.touch7.map((n,i)=><li key={i}>{n}</li>)}</ul>}>
                 <span className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 px-3 py-2 text-sm shadow-sm">
-                  <span className="font-semibold">{kpiData.comms7.length}</span> Comms &gt; 7 Days
+                  <span className="font-semibold">{kpiData.touch7.length}</span> Touch Points &gt; 7 Days
                 </span>
               </Tooltip>
             )}
           </section>
         )}
 
-        {/* Legend — Sent (green), Incomplete (yellow), Overdue (red), Other (grey) */}
+        {/* Legend */}
         <section className="mt-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 p-4">
           <div className="text-xs font-medium mb-2 text-zinc-600 dark:text-zinc-300">Legend</div>
-          <div className="flex flex-wrap gap-3 text-xs">
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-emerald-500"></span>Sent</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-yellow-400"></span>Incomplete</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-rose-500"></span>Overdue</span>
-            <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>Other</span>
+          <div className="flex flex-wrap gap-4 text-xs">
+            <Tooltip content={legendExplainers.complete}>
+              <span className="inline-flex items-center gap-2 cursor-help">
+                <span className="h-3 w-3 rounded-full bg-emerald-500"></span>Complete
+              </span>
+            </Tooltip>
+            <Tooltip content={legendExplainers.needs}>
+              <span className="inline-flex items-center gap-2 cursor-help">
+                <span className="h-3 w-3 rounded-full bg-yellow-400"></span>Needs Attention
+              </span>
+            </Tooltip>
+            <Tooltip content={legendExplainers.overdue}>
+              <span className="inline-flex items-center gap-2 cursor-help">
+                <span className="h-3 w-3 rounded-full bg-rose-500"></span>Overdue
+              </span>
+            </Tooltip>
+            <Tooltip content={legendExplainers.other}>
+              <span className="inline-flex items-center gap-2 cursor-help">
+                <span className="h-3 w-3 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>Other/NA (pause etc)
+              </span>
+            </Tooltip>
           </div>
         </section>
 
@@ -620,12 +741,11 @@ export default function Page(){
               const website = c.Link || c.Website || null;
 
               const lastLQR=lqrStatus(dateFromSheet(c["Last Quarterly Review"]));
-              const commsType=c["Last Comms Type"];
-              const commsDate=dateFromSheet(c["Last Comms Date"]);
-              const commsPill=commsRecency(commsDate, commsType);
+              const touchType=c["Last Comms Type"];
+              const touchDate=dateFromSheet(c["Last Comms Date"]);
+              const touchPill=touchPointRecency(touchDate, touchType);
               const lqrNotesArr = csvToList(c["LQR Notes"]);
 
-              // Ads: pull both report date and ad refresh (new field variants supported)
               const adReportDate = dateFromSheet(
                 c["Last Ad Report"] ||
                 c["Ad Report Sent"] ||
@@ -638,8 +758,6 @@ export default function Page(){
                 c["Ad Refresh Date"] ||
                 c["Last Ad Refresh"]
               );
-
-              // Show if there’s a date OR Scope says they have ads
               const hasAds = !!(
                 adReportDate ||
                 Number(scopeBySlug[slug]?.metaAds || 0) ||
@@ -647,23 +765,31 @@ export default function Page(){
               );
               const adRptPill = hasAds ? adReportStatus(adReportDate, adRefreshDate) : null;
 
-              // Month pills for current year
-              const monthsForYear = (monthDataBySlug[slug]?.[currentYear]) || {};
+              const explicitStart = clientStartDate(c);
+              const inferredStart = inferredStartBySlug[slug] || null;
+              const start = explicitStart || inferredStart || null;
+              const startYear = start?.getFullYear() ?? null;
+              const startMonthIdx = start?.getMonth() ?? null;
+
+              const monthsForYearObj = (monthDataBySlug[slug]?.[currentYear]) || {};
               const monthPills = MONTHS_SHORT.map((label, i) => {
-                const entry = monthsForYear[i] || {};
+                const isDash = (startYear === currentYear) && (startMonthIdx != null) && (i < startMonthIdx);
+                if (isDash) {
+                  return { label: "–", color: "greenMuted", note: "Not applicable (client not yet onboarded this month)" }; // pastel green dash
+                }
+                const entry = monthsForYearObj[i] || {};
                 const state = entry.state || null;
                 const note  = entry.note  || "";
                 const color = monthPillColor(state);
                 return { label, color, note };
               });
 
-              // Up to 3 upcoming items
-              const upcoming=(eventsBySlug[slug] || []).filter(e=>e._date>=new Date()).slice(0,3);
+              const cut = startOfTodayBrisbane();
+              const upcoming=(eventsBySlug[slug] || []).filter(e=>e._date>=cut).slice(0,3);
 
               const cc = contactsBySlug[slug];
               const sc = scopeBySlug[slug];
 
-              // Hover content merged (Scope + Client) on Logo
               const hoverContent = (
                 <div className="text-sm space-y-2">
                   <div className="font-medium">{c.Client || slug}</div>
@@ -716,7 +842,7 @@ export default function Page(){
                         ) : (c.Client || "—")}
                       </div>
 
-                      {/* Team hover chips */}
+                      {/* Team */}
                       <div className="mt-1 flex flex-col gap-1 text-xs">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-zinc-500">Lead:</span>
@@ -734,16 +860,14 @@ export default function Page(){
                     </div>
                   </div>
 
-                  {/* comms + LQR + Ads */}
+                  {/* Touch Point + LQR + Ads */}
                   <div className="mt-4 flex items-center gap-2 text-sm flex-wrap">
-                    {/* Comms (icon + days only) */}
-                    <Tooltip content={<div className="text-xs leading-snug whitespace-pre-wrap">{commsPill.note}</div>}>
-                      <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", commsPill.cls)}>
-                        {commsPill.label}
+                    <Tooltip content={<div className="text-xs leading-snug whitespace-pre-wrap">{touchPill.note}</div>}>
+                      <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", touchPill.cls)}>
+                        {touchPill.label}
                       </span>
                     </Tooltip>
 
-                    {/* LQR (with hover if notes exist) */}
                     {(() => {
                       const chip = (
                         <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", lastLQR.cls)}>
@@ -767,7 +891,6 @@ export default function Page(){
                       );
                     })()}
 
-                    {/* Ads (only if client has ads) */}
                     {adRptPill && (
                       <Tooltip content={<div className="text-xs leading-snug whitespace-pre-wrap">{adRptPill.note}</div>}>
                         <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", adRptPill.cls)}>
@@ -785,7 +908,7 @@ export default function Page(){
                     </div>
                   </div>
 
-                  {/* Next (show up to 3) */}
+                  {/* Next */}
                   <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
                     <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Next</div>
                     {upcoming.length ? (
@@ -813,52 +936,111 @@ export default function Page(){
           </div>
         )}
 
-        {/* Events table */}
-        <section className="mt-10">
-          <h2 className="text-xl font-semibold mb-3">Major Upcoming Events, Holidays or Campaigns</h2>
-          {!events ? (
-            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/60 p-6 shadow-sm">Loading…</div>
-          ) : (
-            <div className="overflow-x-auto rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/85 dark:bg-zinc-900/70 shadow-sm">
-              <table className="min-w-full text-sm">
-                <thead className="bg-zinc-50 dark:bg-zinc-900/40">
-                  <tr className="text-left">
-                    <th className="px-4 py-3 font-semibold">Date</th>
-                    <th className="px-4 py-3 font-semibold">Title</th>
-                    <th className="px-4 py-3 font-semibold">Clients</th>
-                    <th className="px-4 py-3 font-semibold">Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {events.map((ev,i)=>(
-                    <tr key={i} className={i%2 ? "bg-white/60 dark:bg-zinc-900/30":""}>
-                      <td className="px-4 py-3 whitespace-nowrap">{fmt(ev._date)}</td>
-                      <td className="px-4 py-3 font-medium">{ev.Event || "—"}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-1">
-                          {ev._slugs.map((s,idx)=>{
-                            const st=ev._statusByClient[s] || ev._statusDefault || "no content organised or needed";
-                            return (
-                              <span key={idx} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-zinc-200 dark:border-zinc-800 text-xs bg-white dark:bg-zinc-950">
-                                {s} <StatusChip status={st}/>
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">{ev.Notes || ""}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        {/* Events boards */}
+        <section className="mt-10 space-y-6">
+          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/60 shadow-sm overflow-hidden">
+            <button
+              onClick={()=>setOpenUpcoming(v=>!v)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/60 dark:hover:bg-zinc-900/40"
+            >
+              <h2 className="text-xl font-semibold">Major Upcoming Events, Holidays or Campaigns</h2>
+              <span className="text-xs text-zinc-500">{openUpcoming ? "Hide" : "Show"} {Array.isArray(upcomingEvents) ? `(${upcomingEvents.length})` : ""}</span>
+            </button>
+            {openUpcoming && (
+              !upcomingEvents ? (
+                <div className="p-6">Loading…</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-zinc-50 dark:bg-zinc-900/40">
+                      <tr className="text-left">
+                        <th className="px-4 py-3 font-semibold">Date</th>
+                        <th className="px-4 py-3 font-semibold">Title</th>
+                        <th className="px-4 py-3 font-semibold">Clients</th>
+                        <th className="px-4 py-3 font-semibold">Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {upcomingEvents.map((ev,i)=>(
+                        <tr key={i} className={i%2 ? "bg-white/60 dark:bg-zinc-900/30":""}>
+                          <td className="px-4 py-3 whitespace-nowrap">{fmt(ev._date)}</td>
+                          <td className="px-4 py-3 font-medium">{ev.Event || "—"}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              {ev._slugs.map((s,idx)=>{
+                                const st=ev._statusByClient[s] || ev._statusDefault || "no content organised or needed";
+                                return (
+                                  <span key={idx} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-zinc-200 dark:border-zinc-800 text-xs bg-white dark:bg-zinc-950">
+                                    {s} <StatusChip status={st}/>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">{ev.Notes || ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/60 shadow-sm overflow-hidden">
+            <button
+              onClick={()=>setOpenPast(v=>!v)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/60 dark:hover:bg-zinc-900/40"
+            >
+              <h2 className="text-xl font-semibold">Archived</h2>
+              <span className="text-xs text-zinc-500">{openPast ? "Hide" : "Show"} {Array.isArray(pastEvents) ? `(${pastEvents.length})` : ""}</span>
+            </button>
+            {openPast && (
+              !pastEvents ? (
+                <div className="p-6">Loading…</div>
+              ) : pastEvents.length === 0 ? (
+                <div className="p-6 text-sm text-zinc-500">No past items.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-zinc-50 dark:bg-zinc-900/40">
+                      <tr className="text-left">
+                        <th className="px-4 py-3 font-semibold">Date</th>
+                        <th className="px-4 py-3 font-semibold">Title</th>
+                        <th className="px-4 py-3 font-semibold">Clients</th>
+                        <th className="px-4 py-3 font-semibold">Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pastEvents.map((ev,i)=>(
+                        <tr key={i} className={i%2 ? "bg-white/60 dark:bg-zinc-900/30":""}>
+                          <td className="px-4 py-3 whitespace-nowrap">{fmt(ev._date)}</td>
+                          <td className="px-4 py-3 font-medium">{ev.Event || "—"}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              {ev._slugs.map((s,idx)=>{
+                                const st=ev._statusByClient[s] || ev._statusDefault || "no content organised or needed";
+                                return (
+                                  <span key={idx} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-zinc-200 dark:border-zinc-800 text-xs bg-white dark:bg-zinc-950">
+                                    {s} <StatusChip status={st}/>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">{ev.Notes || ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            )}
+          </div>
         </section>
 
-        {/* Footer with Google Sheet link */}
         <footer className="mt-8 text-xs text-zinc-500">
-          Last refreshed on page load. Update Google Sheets →
-          {" "}
+          Last refreshed on page load. Update Google Sheets →{" "}
           {SHEET_URL ? (
             <a className="text-emerald-600 dark:text-emerald-400 hover:underline" href={SHEET_URL} target="_blank" rel="noopener noreferrer">refresh here</a>
           ) : (
