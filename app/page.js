@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 /* ---------------- constants ---------------- */
 
+// Exact icon map (keys must match sheet values exactly)
 const COMMS_ICON = Object.freeze({
   Phone: "☎️",
   Email: "📧",
@@ -13,8 +14,10 @@ const COMMS_ICON = Object.freeze({
   "In Person": "🤝",
 });
 
+// Month labels for chips
 const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
+// Event status labels (for the Events sheet)
 const STATUS_LABELS = [
   "no content organised or needed",
   "content planned",
@@ -26,15 +29,17 @@ function cn(...a){return a.filter(Boolean).join(" ");}
 
 function dateFromSheet(v){
   if (!v) return null;
+
+  // Already a Date?
   if (v instanceof Date && !Number.isNaN(v.getTime())) return v;
 
   const s = String(v).trim();
 
-  // Native parse (ISO or natural like "Mar 2025")
+  // Try native (works for ISO like 2025-09-15 and many natural strings)
   const iso = new Date(s);
   if (!Number.isNaN(iso.getTime())) return iso;
 
-  // dd/mm/yyyy or dd-mm-yyyy
+  // Fallback: dd/mm/yyyy or dd-mm-yyyy
   {
     const m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
     if (m) {
@@ -44,7 +49,7 @@ function dateFromSheet(v){
     }
   }
 
-  // "March 2025" / "Mar-25"
+  // Fallback: "March 2025" / "Mar-25"
   {
     const m2 = s.match(/^([A-Za-z]{3,})[ -]?(\d{2,4})$/);
     if (m2) {
@@ -91,11 +96,11 @@ function csvToList(s){
     .filter(Boolean);
 }
 
-/* Brisbane helpers (UTC+10, no DST) */
+/* Brisbane "today" for event cutover (UTC+10, no DST) */
 function nowInBrisbane(){
   const now = new Date();
   const utc = now.getTime() + now.getTimezoneOffset()*60000;
-  const offsetMs = 10*60*60*1000;
+  const offsetMs = 10*60*60*1000; // +10
   return new Date(utc + offsetMs);
 }
 function startOfTodayBrisbane(){
@@ -103,16 +108,17 @@ function startOfTodayBrisbane(){
   return new Date(n.getFullYear(), n.getMonth(), n.getDate());
 }
 
-/* ---------------- status helpers ---------------- */
+/* LQR pill: label uses day+month (no year). green ≤3mo, yellow =4mo, red ≥5mo, grey missing */
 function lqrStatus(date){
   const m=monthsBetween(date,new Date());
   if(m==null) return {label:"LQR —", cls:"bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300"};
   const base=`LQR ${fmtDM(date)}`;
   if(m<=3) return {label:base, cls:"bg-emerald-500 text-white"};
-  if(m===4) return {label:base, cls:"bg-yellow-400 text-zinc-900"}; // 4 months = yellow
+  if(m===4) return {label:base, cls:"bg-yellow-400 text-zinc-900"}; // 4 months = yellow (warning)
   return {label:base, cls:"bg-rose-500 text-white"};
 }
 
+/* Touch Point pill (renamed from "comms"): icon + days; tooltip says method + full date */
 function touchPointRecency(date, type) {
   const icon = COMMS_ICON[type] ?? "🗒️";
   const d = daysSince(date);
@@ -127,18 +133,19 @@ function touchPointRecency(date, type) {
   const by = type || "Unknown method";
   return {
     label: `${icon} ${d}d`,
-    cls: d <= 7 ? "bg-emerald-500 text-white" : "bg-rose-500 text-white",
+    cls: d <= 7 ? "bg-emerald-500 text-white" : "bg-rose-500 text-white", // unchanged cadence (<=7 green, >7 red)
     note: `Last Touch Point was by ${by} on ${when}.`,
   };
 }
 
+/* Ads pill: label "Ads {day month}" (no year); tooltip shows last report + ad refresh */
 function adReportStatus(reportDate, refreshDate){
   const d = daysSince(reportDate);
   const baseLabel = reportDate ? `Ads ${fmtDM(reportDate)}` : "Ads —";
-  let cls = "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300";
+  let cls = "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300"; // missing
   if (d != null) {
     if (d <= 31) cls = "bg-emerald-500 text-white";
-    else if (d <= 45) cls = "bg-yellow-400 text-zinc-900";
+    else if (d <= 45) cls = "bg-yellow-400 text-zinc-900"; // align warning tone
     else cls = "bg-rose-500 text-white";
   }
   const note =
@@ -161,13 +168,15 @@ function toMonthIndex(m){
 
 function normalizeMonthState(s){
   const raw = String(s || "").trim().toLowerCase();
+  // Three statuses
   if (raw === "sent") return "sent";
   if (raw === "incomplete") return "incomplete";
   if (raw === "overdue") return "overdue";
+  // Legacy synonyms → map to closest
   if (["delivered","complete and sent","green"].includes(raw)) return "sent";
   if (["not sent","planned","plan","p","done","complete","completed","yellow"].includes(raw)) return "incomplete";
   if (["late","red"].includes(raw)) return "overdue";
-  return null;
+  return null; // anything else = no entry ⇒ grey
 }
 
 function monthPillColor(state) {
@@ -252,7 +261,7 @@ function Tooltip({ children, content, width = "w-80" }) {
   return (
     <span
       className="relative group inline-flex focus:outline-none"
-      tabIndex={0}
+      tabIndex={0} /* enables keyboard/touch focus to show tooltip */
     >
       {children}
       <span
@@ -270,10 +279,11 @@ function Tooltip({ children, content, width = "w-80" }) {
   );
 }
 
+/* FIXED-SIZE MONTH CHIP */
 function MonthPill({ label, color, note }) {
   const stylesMap = {
     green: "bg-emerald-500 text-white",
-    greenMuted: "bg-emerald-200 text-emerald-900 dark:bg-emerald-700/30 dark:text-emerald-200", // NEW pastel green
+    greenMuted: "bg-emerald-200 text-emerald-900 dark:bg-emerald-700/30 dark:text-emerald-200", // pastel for "–"
     yellow: "bg-yellow-400 text-zinc-900",
     red:   "bg-rose-500 text-white",
     grey:  "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300",
@@ -282,7 +292,12 @@ function MonthPill({ label, color, note }) {
 
   const pill = (
     <span
-      className={cn("px-2.5 py-1 rounded-full text-xs font-medium", styles)}
+      className={cn(
+        // fixed size & centering
+        "inline-flex items-center justify-center text-center h-7 w-12",
+        "rounded-full text-xs font-medium",
+        styles
+      )}
       {...(note ? { title: note } : {})}
     >
       {label}
@@ -341,6 +356,7 @@ export default function Page(){
   const [error,setError]=useState("");
   const [q,setQ]=useState("");
 
+  // Events collapsibles
   const [openUpcoming, setOpenUpcoming] = useState(true);
   const [openPast, setOpenPast] = useState(false);
 
@@ -400,6 +416,7 @@ export default function Page(){
     }catch(e){ setError(e.message); }
   })(); },[]);
 
+  // Team maps
   const teamByName=useMemo(()=>{
     const map={};
     (team||[]).forEach(p=>{
@@ -427,6 +444,7 @@ export default function Page(){
     }); return out;
   },[team]);
 
+  // Contacts map
   const contactsBySlug = useMemo(()=>{
     const m={}; (contacts||[]).forEach(r=>{
       const slug=normalizeSlug(r.Slug);
@@ -443,6 +461,7 @@ export default function Page(){
     }); return m;
   },[contacts]);
 
+  // Scope map
   const scopeBySlug = useMemo(()=>{
     const m={};
     (scope||[]).forEach(r=>{
@@ -462,8 +481,8 @@ export default function Page(){
     return m;
   },[scope]);
 
+  // Monthly: slug -> year -> monthIndex -> { state, note }
   const currentYear = new Date().getFullYear();
-
   const monthDataBySlug = useMemo(() => {
     const out = {};
     if (!monthly) return out;
@@ -485,6 +504,7 @@ export default function Page(){
     return out;
   }, [monthly]);
 
+  // Inferred client "start" date per slug from Monthly rows (first ever month present)
   const inferredStartBySlug = useMemo(()=>{
     if(!monthly) return {};
     const best = {};
@@ -504,6 +524,7 @@ export default function Page(){
     return out;
   },[monthly]);
 
+  // Events grouped by slug
   const eventsBySlug=useMemo(()=>{
     if(!events) return {};
     const m={};
@@ -511,6 +532,7 @@ export default function Page(){
     return m;
   },[events]);
 
+  // Search
   const filtered=useMemo(()=>{
     if(!clients) return null;
     if(!q) return clients;
@@ -523,6 +545,7 @@ export default function Page(){
     );
   },[clients,q]);
 
+  // KPI chips (only show relevant, with hover list)
   const kpiData=useMemo(()=>{
     if(!clients) return null;
     const dueSoon=[], overdue=[], touch7=[];
@@ -530,15 +553,16 @@ export default function Page(){
       const name = c.Client || c.Slug || "—";
       const lastLQR = dateFromSheet(c["Last Quarterly Review"]);
       const m = monthsBetween(lastLQR, new Date());
-      if(m===4) dueSoon.push(name);
-      else if(m>=5) overdue.push(name);
+      if(m===4) dueSoon.push(name);          // 4-month LQR = yellow warning
+      else if(m>=5) overdue.push(name);      // red
 
       const d = daysSince(dateFromSheet(c["Last Comms Date"]));
-      if(d!=null && d>7) touch7.push(name);
+      if(d!=null && d>7) touch7.push(name);  // renamed KPI label below
     }
     return { dueSoon, overdue, touch7 };
   },[clients]);
 
+  // Legend hover content (explanations)
   const legendExplainers = useMemo(()=>{
     return {
       complete: (
@@ -557,7 +581,7 @@ export default function Page(){
           <ul className="list-disc pl-4 space-y-1">
             <li>Warning windows across the board</li>
             <li><strong>LQR:</strong> month 4 shows as yellow (warning)</li>
-            <li><strong>Touch Points:</strong> aim weekly; if you’re approaching 7 days, schedule one</li>
+            <li><strong>Touch Points cadence:</strong> aim weekly; if you’re approaching 7 days, schedule one</li>
           </ul>
         </div>
       ),
@@ -575,7 +599,7 @@ export default function Page(){
         <div className="text-xs leading-snug">
           <div className="font-semibold mb-1">Other/NA (pause etc)</div>
           <ul className="list-disc pl-4 space-y-1">
-            <li>Months before a client started show a “–” dash</li>
+            <li>Months before a client started will show a “–” dash</li>
             <li>Paused/seasonal/NA appear neutral</li>
           </ul>
         </div>
@@ -583,6 +607,7 @@ export default function Page(){
     };
   },[]);
 
+  // Events split & sort (Brisbane day cut)
   const { upcomingEvents, pastEvents } = useMemo(()=>{
     if(!events) return {upcomingEvents: null, pastEvents: null};
     const cut = startOfTodayBrisbane();
@@ -592,11 +617,12 @@ export default function Page(){
       if(e._date < cut) pa.push(e);
       else up.push(e);
     }
-    up.sort((a,b)=>a._date-b._date);
-    pa.sort((a,b)=>b._date-a._date);
+    up.sort((a,b)=>a._date-b._date);       // soonest first
+    pa.sort((a,b)=>b._date-a._date);       // most recent past first
     return {upcomingEvents: up, pastEvents: pa};
   },[events]);
 
+  // Helper: infer client start date from common fields
   function clientStartDate(row){
     return (
       dateFromSheet(row["Start Date"]) ||
@@ -620,6 +646,7 @@ export default function Page(){
 
   return (
     <main className="min-h-screen relative overflow-hidden">
+      {/* soft gradient bg */}
       <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60%_50%_at_10%_0%,rgba(16,185,129,0.12),transparent_60%),radial-gradient(50%_50%_at_100%_0%,rgba(59,130,246,0.10),transparent_50%),linear-gradient(to_bottom,#fafafa,transparent_30%)] dark:bg-[radial-gradient(60%_50%_at_10%_0%,rgba(16,185,129,0.12),transparent_60%),radial-gradient(50%_50%_at_100%_0%,rgba(59,130,246,0.10),transparent_50%),linear-gradient(to_bottom,#0b0b0b,transparent_30%)]"></div>
 
       <div className="max-w-7xl mx-auto p-6 text-zinc-900 dark:text-zinc-100">
@@ -656,6 +683,7 @@ export default function Page(){
                 </button>
               )}
 
+              {/* Logout */}
               <form method="POST" action="/api/unlock?logout=1">
                 <button
                   type="submit"
@@ -670,7 +698,7 @@ export default function Page(){
           </div>
         </header>
 
-        {/* KPI Row */}
+        {/* KPI row — only show relevant, with hover list */}
         {kpiData && (
           <section className="mt-6 flex flex-wrap gap-3">
             {kpiData.dueSoon.length>0 && (
@@ -697,7 +725,7 @@ export default function Page(){
           </section>
         )}
 
-        {/* Legend */}
+        {/* Legend — Complete (green), Needs Attention (yellow), Overdue (red), Other/NA (pause etc) */}
         <section className="mt-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 p-4">
           <div className="text-xs font-medium mb-2 text-zinc-600 dark:text-zinc-300">Legend</div>
           <div className="flex flex-wrap gap-4 text-xs">
@@ -741,11 +769,12 @@ export default function Page(){
               const website = c.Link || c.Website || null;
 
               const lastLQR=lqrStatus(dateFromSheet(c["Last Quarterly Review"]));
-              const touchType=c["Last Comms Type"];
+              const touchType=c["Last Comms Type"];        // using same source fields
               const touchDate=dateFromSheet(c["Last Comms Date"]);
               const touchPill=touchPointRecency(touchDate, touchType);
               const lqrNotesArr = csvToList(c["LQR Notes"]);
 
+              // Ads: pull both report date and ad refresh (new field variants supported)
               const adReportDate = dateFromSheet(
                 c["Last Ad Report"] ||
                 c["Ad Report Sent"] ||
@@ -758,6 +787,8 @@ export default function Page(){
                 c["Ad Refresh Date"] ||
                 c["Last Ad Refresh"]
               );
+
+              // Show if there’s a date OR Scope says they have ads
               const hasAds = !!(
                 adReportDate ||
                 Number(scopeBySlug[slug]?.metaAds || 0) ||
@@ -765,17 +796,19 @@ export default function Page(){
               );
               const adRptPill = hasAds ? adReportStatus(adReportDate, adRefreshDate) : null;
 
+              // Determine start (explicit client field OR inferred from Monthly rows)
               const explicitStart = clientStartDate(c);
               const inferredStart = inferredStartBySlug[slug] || null;
               const start = explicitStart || inferredStart || null;
               const startYear = start?.getFullYear() ?? null;
               const startMonthIdx = start?.getMonth() ?? null;
 
+              // Month pills for current year, with "dash" for pre-start months
               const monthsForYearObj = (monthDataBySlug[slug]?.[currentYear]) || {};
               const monthPills = MONTHS_SHORT.map((label, i) => {
                 const isDash = (startYear === currentYear) && (startMonthIdx != null) && (i < startMonthIdx);
                 if (isDash) {
-                  return { label: "–", color: "greenMuted", note: "Not applicable (client not yet onboarded this month)" }; // pastel green dash
+                  return { label: "–", color: "greenMuted", note: "Not applicable (client not yet onboarded this month)" }; // fixed-size pastel dash
                 }
                 const entry = monthsForYearObj[i] || {};
                 const state = entry.state || null;
@@ -784,12 +817,14 @@ export default function Page(){
                 return { label, color, note };
               });
 
+              // Up to 3 upcoming items (Brisbane cut)
               const cut = startOfTodayBrisbane();
               const upcoming=(eventsBySlug[slug] || []).filter(e=>e._date>=cut).slice(0,3);
 
               const cc = contactsBySlug[slug];
               const sc = scopeBySlug[slug];
 
+              // Hover content merged (Scope + Client) on Logo
               const hoverContent = (
                 <div className="text-sm space-y-2">
                   <div className="font-medium">{c.Client || slug}</div>
@@ -842,7 +877,7 @@ export default function Page(){
                         ) : (c.Client || "—")}
                       </div>
 
-                      {/* Team */}
+                      {/* Team hover chips */}
                       <div className="mt-1 flex flex-col gap-1 text-xs">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-zinc-500">Lead:</span>
@@ -862,12 +897,14 @@ export default function Page(){
 
                   {/* Touch Point + LQR + Ads */}
                   <div className="mt-4 flex items-center gap-2 text-sm flex-wrap">
+                    {/* Touch Point (icon + days only) */}
                     <Tooltip content={<div className="text-xs leading-snug whitespace-pre-wrap">{touchPill.note}</div>}>
                       <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", touchPill.cls)}>
                         {touchPill.label}
                       </span>
                     </Tooltip>
 
+                    {/* LQR (with hover if notes exist) */}
                     {(() => {
                       const chip = (
                         <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", lastLQR.cls)}>
@@ -891,6 +928,7 @@ export default function Page(){
                       );
                     })()}
 
+                    {/* Ads (only if client has ads) */}
                     {adRptPill && (
                       <Tooltip content={<div className="text-xs leading-snug whitespace-pre-wrap">{adRptPill.note}</div>}>
                         <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", adRptPill.cls)}>
@@ -908,7 +946,7 @@ export default function Page(){
                     </div>
                   </div>
 
-                  {/* Next */}
+                  {/* Next (show up to 3) */}
                   <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
                     <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Next</div>
                     {upcoming.length ? (
@@ -938,6 +976,7 @@ export default function Page(){
 
         {/* Events boards */}
         <section className="mt-10 space-y-6">
+          {/* Major Upcoming (collapsible) */}
           <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/60 shadow-sm overflow-hidden">
             <button
               onClick={()=>setOpenUpcoming(v=>!v)}
@@ -987,6 +1026,7 @@ export default function Page(){
             )}
           </div>
 
+          {/* Archived (collapsible) */}
           <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/60 shadow-sm overflow-hidden">
             <button
               onClick={()=>setOpenPast(v=>!v)}
@@ -1039,6 +1079,7 @@ export default function Page(){
           </div>
         </section>
 
+        {/* Footer with Google Sheet link */}
         <footer className="mt-8 text-xs text-zinc-500">
           Last refreshed on page load. Update Google Sheets →{" "}
           {SHEET_URL ? (
